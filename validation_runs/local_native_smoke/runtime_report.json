@@ -1,0 +1,34 @@
+{
+  "hardware": [
+    {
+      "rank": 0,
+      "name": "NVIDIA GeForce RTX 3070 Ti Laptop GPU",
+      "vram_gib": 7.99951171875
+    }
+  ],
+  "probes": [
+    {
+      "width": 8,
+      "ranks": [
+        [
+          {
+            "batch_size": 1,
+            "fits": true,
+            "allocated_bytes": 74956288,
+            "reserved_bytes": 1944059904,
+            "peak_allocated_bytes": 1844964864,
+            "peak_reserved_bytes": 1944059904,
+            "free_bytes": 5474615296,
+            "total_bytes": 8589410304,
+            "ddp_margin_bytes": 402653184,
+            "seconds": 5.793732999999975,
+            "optimizer_state_allocated": true
+          }
+        ]
+      ]
+    }
+  ],
+  "world_size": 1,
+  "torch_version": "2.14.1+cu132",
+  "cuda_version": "13.2"
+}

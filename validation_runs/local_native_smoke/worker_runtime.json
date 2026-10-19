@@ -1,0 +1,167 @@
+{
+  "config": {
+    "data_root": "D:\\filament-segmentation-2026\\MAGFilo_1.0_Kaggle_2026",
+    "output_dir": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke",
+    "image_size": 2048,
+    "seed": 10,
+    "val_fraction": 0.2,
+    "multi_annotator_train_only": true,
+    "model": {
+      "name": "modified",
+      "in_channels": 1,
+      "out_channels": 2,
+      "init_features": 8,
+      "normalization": "group",
+      "activation": "relu",
+      "checkpoint_blocks": true
+    },
+    "loss": {
+      "bce_weight": 0.35,
+      "dice_weight": 0.4,
+      "boundary_weight": 0.25,
+      "cldice_weight": 0.0,
+      "boundary_pos_weight": 5.0,
+      "skeleton_iterations": 5
+    },
+    "separation_radius": 1,
+    "centerline": false,
+    "normalization": "unit",
+    "augment": {
+      "flips": true,
+      "rotate90": true,
+      "brightness": 0.05,
+      "contrast": 0.1,
+      "gamma": 0.1,
+      "noise": 0.0
+    },
+    "epochs": 1,
+    "patience": 8,
+    "pq_every": 1,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.0001,
+    "scheduler": "plateau",
+    "accumulation_steps": 4,
+    "microbatch": 1,
+    "batch_candidates": [
+      1,
+      2
+    ],
+    "width_fallbacks": [
+      8
+    ],
+    "memory_fraction": 0.85,
+    "grad_clip": 1.0,
+    "amp": true,
+    "channels_last": true,
+    "workers": 0,
+    "prefetch_factor": 1,
+    "resume": "",
+    "deterministic": true,
+    "smoke": true,
+    "smoke_records": 2,
+    "postprocess": {
+      "method": "boundary",
+      "foreground_threshold": 0.5,
+      "boundary_threshold": 0.5,
+      "min_area": 20,
+      "seed_min_area": 3,
+      "seed_distance": 5,
+      "boundary_weight": 2.0,
+      "closing_radius": 0,
+      "reconnect_distance": 0
+    }
+  },
+  "train_records": [
+    {
+      "image_id": "040301-20140609195854Bh",
+      "file_name": "20140609195854Bh.jpeg",
+      "image_path": "D:\\filament-segmentation-2026\\MAGFilo_1.0_Kaggle_2026\\train\\train_images\\20140609195854Bh.jpeg",
+      "source_hash": "9941c58dd0db26a01c7b6c049d64cc6c9ac07c9ce72a34f59fb6022e728bb8cf",
+      "height": 2048,
+      "width": 2048,
+      "annotation_ids": [
+        "d7fd9cdb-3f34-4dfc-a1fa-c1fd25110a98",
+        "ca65251f-f7c8-4553-ad55-ad0f06272782",
+        "7b301b5d-fe5d-4b4d-b0b7-41b0f8cabeec",
+        "184911bf-d671-4a08-bc84-6f5fb7ce5277",
+        "67dcd25e-ed1e-4565-960e-d653c9a905ab",
+        "730b345b-574a-4da7-9b62-5ffe6192ed30",
+        "e5f87bb8-4000-46ee-81b5-701705880be6",
+        "30c4ce39-dfff-4b27-8624-fa9a6a00b76e",
+        "f376240a-00af-44da-9705-402ffc8f8d49",
+        "dcd80baf-0c75-44cb-99ce-9eda5756e507",
+        "5787e002-b7aa-46d2-85e1-5d99afc6355a",
+        "9113780a-b5a4-4dc2-b6fc-580a7513ed94"
+      ],
+      "target_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke\\targets\\47ae0acba117042be67b9431a6746e8d4d30e56b79da82af821fae0d80aa7bf6.npz",
+      "instances_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke\\targets\\47ae0acba117042be67b9431a6746e8d4d30e56b79da82af821fae0d80aa7bf6.json",
+      "target_fingerprint": "47ae0acba117042be67b9431a6746e8d4d30e56b79da82af821fae0d80aa7bf6"
+    },
+    {
+      "image_id": "050103-20111116063134Lh",
+      "file_name": "20111116063134Lh.jpeg",
+      "image_path": "D:\\filament-segmentation-2026\\MAGFilo_1.0_Kaggle_2026\\train\\train_images\\20111116063134Lh.jpeg",
+      "source_hash": "d4181f17c34310041ff1547d03c1869436efd0d7b90c2ddee92e8e5ff9e939cf",
+      "height": 2048,
+      "width": 2048,
+      "annotation_ids": [
+        "358e381d-d27e-4e28-8899-236567aa8a00",
+        "381a63d8-5401-4131-b181-282c0d50fd50",
+        "3f0cf8fe-0689-44f6-b436-88628fdd3a9d",
+        "cb3d0cd0-00d4-4f36-8b07-2edf1cc36cf8",
+        "feb82bc1-6d42-4766-a0e8-f857c47cd5ad",
+        "197f4b3f-03ee-45fa-be1d-97cef92d9ce9",
+        "4fbc3119-3d78-4078-8852-064714ca76b0",
+        "6aac8e61-826b-4a66-ad0c-1cd2698a2a65",
+        "04864537-97a2-4075-b19d-d2c5760e26ce",
+        "c3783a29-d5ad-4d3a-9837-cc3d5233638b",
+        "f1e18d29-0432-4894-9639-141ec44eae0c"
+      ],
+      "target_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke\\targets\\912071f91b0642af64af81d91a7306b8ea93cdd9ed05fce2eade618022cf991c.npz",
+      "instances_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke\\targets\\912071f91b0642af64af81d91a7306b8ea93cdd9ed05fce2eade618022cf991c.json",
+      "target_fingerprint": "912071f91b0642af64af81d91a7306b8ea93cdd9ed05fce2eade618022cf991c"
+    }
+  ],
+  "val_records": [
+    {
+      "image_id": "020101-20170411013550Uh",
+      "file_name": "20170411013550Uh.jpeg",
+      "image_path": "D:\\filament-segmentation-2026\\MAGFilo_1.0_Kaggle_2026\\train\\train_images\\20170411013550Uh.jpeg",
+      "source_hash": "04395cb3ea48484b2d4c9b478b97351c42592b4f50822950c9d7afb509bb1713",
+      "height": 2048,
+      "width": 2048,
+      "annotation_ids": [
+        "b657a7f7-5a3b-4be4-bd16-85b26a66c8ea",
+        "0033ac4e-9782-4a47-ba4e-d32cc4ab6ec1",
+        "0f33843d-b947-4a1b-9ee4-3b74190b4a7e"
+      ],
+      "target_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke\\targets\\9add09c12d83dd3f170c93e3c13857760a8774bfdaf5bb21a17bf789e08e223c.npz",
+      "instances_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke\\targets\\9add09c12d83dd3f170c93e3c13857760a8774bfdaf5bb21a17bf789e08e223c.json",
+      "target_fingerprint": "9add09c12d83dd3f170c93e3c13857760a8774bfdaf5bb21a17bf789e08e223c"
+    },
+    {
+      "image_id": "050302-20130808140054Bh",
+      "file_name": "20130808140054Bh.jpeg",
+      "image_path": "D:\\filament-segmentation-2026\\MAGFilo_1.0_Kaggle_2026\\train\\train_images\\20130808140054Bh.jpeg",
+      "source_hash": "f31479724aaef377a5f652f7c92bfde9014d5e6358621348d712424ddce97dc4",
+      "height": 2048,
+      "width": 2048,
+      "annotation_ids": [
+        "4befd9b6-c1bb-47f4-974e-eeba596e668c",
+        "f11372cd-e20a-4b60-9299-6a5686ec6d03",
+        "598b9537-3c3e-4790-8fb1-a1ab1774967d",
+        "fda9d3ee-99a1-47ee-9d1f-01b4735c3b05",
+        "1b2cc163-47cb-43ab-b8c6-329edc782d47",
+        "542cba53-3a9a-4f48-aadc-3ab81f7bceb2",
+        "7969a3c9-0638-425b-b952-229ca06f7450",
+        "0be9547b-7467-4967-bcca-478a55f90731",
+        "c563aec4-8e25-487e-9343-93cffc07f08e"
+      ],
+      "target_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke\\targets\\e2d349a39d5a81985acd5ba509f5f8b581aa90b2c5fa1fbd4cf254570c3f2ba8.npz",
+      "instances_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke\\targets\\e2d349a39d5a81985acd5ba509f5f8b581aa90b2c5fa1fbd4cf254570c3f2ba8.json",
+      "target_fingerprint": "e2d349a39d5a81985acd5ba509f5f8b581aa90b2c5fa1fbd4cf254570c3f2ba8"
+    }
+  ],
+  "split_fingerprint": "2f9d3daf01cd58d04512e67e23832c7d9cdebf52427e8063254cfaecff8404c1",
+  "smoke": true
+}

@@ -1,0 +1,2 @@
+GPU probe: {'batch_size': 1, 'fits': True, 'allocated_bytes': 74956288, 'reserved_bytes': 1944059904, 'peak_allocated_bytes': 1844964864, 'peak_reserved_bytes': 1944059904, 'free_bytes': 5474615296, 'total_bytes': 8589410304, 'ddp_margin_bytes': 402653184, 'seconds': 5.793732999999975, 'optimizer_state_allocated': True}
+Epoch 1: loss=0.7654, val=0.7518, PQ=0.0

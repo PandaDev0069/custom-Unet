@@ -1,0 +1,71 @@
+{
+  "verified_at": "2026-10-19T13:57:18.268077+09:00",
+  "cpu_tests": {
+    "tests": 28,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "passed": 26
+  },
+  "gpu_tests": {
+    "tests": 28,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 28
+  },
+  "ddp": "two CPU/Gloo ranks: passed",
+  "standalone_notebook": {
+    "code_cells_executed": 50,
+    "errors": 0,
+    "primary_sha256": "de85c1732638bfe8eeb47c64ebfc14be509fb5976713e724b63643ce668cd63a",
+    "executed_path": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\executed_smoke.ipynb"
+  },
+  "dataset": {
+    "source_images": 707,
+    "test_images": 180,
+    "annotation_records": 1154,
+    "annotations": 8199,
+    "multi_annotator_sources": 296,
+    "overlap_records": 5,
+    "small_instances": 1,
+    "train_records": 1013,
+    "val_records": 141
+  },
+  "native_gpu": {
+    "rank": 0,
+    "name": "NVIDIA GeForce RTX 3070 Ti Laptop GPU",
+    "vram_gib": 7.99951171875
+  },
+  "probe": {
+    "batch_size": 1,
+    "fits": true,
+    "allocated_bytes": 74956288,
+    "reserved_bytes": 1944059904,
+    "peak_allocated_bytes": 1844964864,
+    "peak_reserved_bytes": 1944059904,
+    "free_bytes": 5474615296,
+    "total_bytes": 8589410304,
+    "ddp_margin_bytes": 402653184,
+    "seconds": 2.4758623000002444,
+    "optimizer_state_allocated": true
+  },
+  "smoke_validation": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 12,
+    "iou_sum": 0.0,
+    "pq": 0.0,
+    "matched_instance_iou": 0.0,
+    "records": 2,
+    "predicted_instances": 0,
+    "fragmented_gt": 0,
+    "merged_predictions": 0
+  },
+  "limitations": [
+    "No full dataset training run",
+    "No Linux/NCCL or dual-T4 execution",
+    "No Kaggle submission uploaded or accepted",
+    "No performance improvement measured"
+  ]
+}

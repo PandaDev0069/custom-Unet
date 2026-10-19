@@ -1,0 +1,72 @@
+{
+  "data_root": "D:\\filament-segmentation-2026\\MAGFilo_1.0_Kaggle_2026",
+  "output_dir": "D:\\filament-segmentation-2026\\custom-Unet\\validation_runs\\local_native_smoke",
+  "image_size": 2048,
+  "seed": 10,
+  "val_fraction": 0.2,
+  "multi_annotator_train_only": true,
+  "model": {
+    "name": "modified",
+    "in_channels": 1,
+    "out_channels": 2,
+    "init_features": 8,
+    "normalization": "group",
+    "activation": "relu",
+    "checkpoint_blocks": true
+  },
+  "loss": {
+    "bce_weight": 0.35,
+    "dice_weight": 0.4,
+    "boundary_weight": 0.25,
+    "cldice_weight": 0.0,
+    "boundary_pos_weight": 5.0,
+    "skeleton_iterations": 5
+  },
+  "separation_radius": 1,
+  "centerline": false,
+  "normalization": "unit",
+  "augment": {
+    "flips": true,
+    "rotate90": true,
+    "brightness": 0.05,
+    "contrast": 0.1,
+    "gamma": 0.1,
+    "noise": 0.0
+  },
+  "epochs": 1,
+  "patience": 8,
+  "pq_every": 1,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "scheduler": "plateau",
+  "accumulation_steps": 4,
+  "microbatch": 1,
+  "batch_candidates": [
+    1,
+    2
+  ],
+  "width_fallbacks": [
+    8
+  ],
+  "memory_fraction": 0.85,
+  "grad_clip": 1.0,
+  "amp": true,
+  "channels_last": true,
+  "workers": 0,
+  "prefetch_factor": 1,
+  "resume": "",
+  "deterministic": true,
+  "smoke": true,
+  "smoke_records": 2,
+  "postprocess": {
+    "method": "boundary",
+    "foreground_threshold": 0.5,
+    "boundary_threshold": 0.5,
+    "min_area": 20,
+    "seed_min_area": 3,
+    "seed_distance": 5,
+    "boundary_weight": 2.0,
+    "closing_radius": 0,
+    "reconnect_distance": 0
+  }
+}

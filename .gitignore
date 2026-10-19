@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+filament_outputs/
+filament_smoke/
+filament_full/
+filament_runtime/
+validation_runs/**/targets/
+validation_runs/**/checkpoints/
+validation_runs/**/validation_predictions/
+validation_runs/**/filament_runtime/
+validation_runs/**/inference_journal/

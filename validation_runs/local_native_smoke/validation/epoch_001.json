@@ -1,0 +1,92 @@
+{
+  "metrics": {
+    "loss": 0.7518477439880371,
+    "bce": 0.4107223302125931,
+    "dice": 0.9961667954921722,
+    "boundary": 0.8385127782821655,
+    "cldice": 0.0,
+    "samples": 2.0,
+    "seconds": 2.1366892000000917,
+    "images_per_second": 0.9360275701304215,
+    "tp": 0,
+    "fp": 0,
+    "fn": 12,
+    "iou_sum": 0.0,
+    "pq": 0.0,
+    "matched_instance_iou": 0.0,
+    "records": 2,
+    "predicted_instances": 0,
+    "fragmented_gt": 0,
+    "merged_predictions": 0
+  },
+  "records": [
+    {
+      "tp": 0,
+      "fp": 0,
+      "fn": 3,
+      "iou_sum": 0.0,
+      "matched_iou": [],
+      "pq": 0.0,
+      "n_gt": 3,
+      "n_pred": 0,
+      "iou_distribution": [],
+      "dice_distribution": [],
+      "iou_matrix": [
+        [],
+        [],
+        []
+      ],
+      "fragmented_gt": 0,
+      "gt_overlap_degrees": [
+        0,
+        0,
+        0
+      ],
+      "merged_predictions": 0,
+      "pred_overlap_degrees": [],
+      "image_id": "020101-20170411013550Uh",
+      "file_name": "20170411013550Uh.jpeg",
+      "postprocess_evaluation_seconds": 0.5704918000001271
+    },
+    {
+      "tp": 0,
+      "fp": 0,
+      "fn": 9,
+      "iou_sum": 0.0,
+      "matched_iou": [],
+      "pq": 0.0,
+      "n_gt": 9,
+      "n_pred": 0,
+      "iou_distribution": [],
+      "dice_distribution": [],
+      "iou_matrix": [
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        []
+      ],
+      "fragmented_gt": 0,
+      "gt_overlap_degrees": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "merged_predictions": 0,
+      "pred_overlap_degrees": [],
+      "image_id": "050302-20130808140054Bh",
+      "file_name": "20130808140054Bh.jpeg",
+      "postprocess_evaluation_seconds": 0.6772164999997585
+    }
+  ]
+}
