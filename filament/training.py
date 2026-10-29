@@ -64,6 +64,11 @@ def restore_rng(state):
 def _distributed(): return dist.is_available() and dist.is_initialized()
 
 
+def should_compute_pq(epoch, epochs, pq_every):
+    """Always evaluate the first/final epoch, then the requested PQ cadence."""
+    return epoch==1 or epoch==epochs or epoch%pq_every==0
+
+
 def gather_objects(value):
     if not _distributed(): return [value]
     gathered=[None]*dist.get_world_size(); dist.all_gather_object(gathered,value)
@@ -108,6 +113,7 @@ def run_epoch(model, loader, criterion, device, optimizer=None, scaler=None,
     scaler=scaler or torch.amp.GradScaler("cuda",enabled=amp and device.type=="cuda")
     totals=torch.zeros(len(LOSS_NAMES)+1,dtype=torch.float64,device=device)
     rows=[]; started=time.perf_counter()
+    postprocess_seconds=score_seconds=0.
     if training: optimizer.zero_grad(set_to_none=True)
     batches=len(loader)
     batch_size=loader.batch_size
@@ -140,21 +146,30 @@ def run_epoch(model, loader, criterion, device, optimizer=None, scaler=None,
                     r=pq_records[record_index]
                     before=time.perf_counter()
                     _,instances=extract_instances(probabilities[local],postprocess_config)
+                    after_postprocess=time.perf_counter()
                     row=evaluate_panoptic_quality(cached_instances(r),instances)
+                    after_score=time.perf_counter()
+                    postprocess_seconds+=after_postprocess-before
+                    score_seconds+=after_score-after_postprocess
                     rows.append(dict(**row,image_id=r["image_id"],file_name=r["file_name"],
                         postprocess_evaluation_seconds=time.perf_counter()-before))
             if (index+1)%log_every==0 and (not _distributed() or dist.get_rank()==0):
                 print(f"{'Training' if training else 'Validation'} native batch {index+1}/{batches}",flush=True)
             del inputs,logits,values
     if device.type=="cuda": torch.cuda.synchronize(device)
-    seconds=torch.tensor(time.perf_counter()-started,dtype=torch.float64,device=device)
-    if _distributed():
-        dist.all_reduce(totals); dist.all_reduce(seconds,op=dist.ReduceOp.MAX)
+    if _distributed(): dist.all_reduce(totals)
     packed=totals.cpu().tolist(); samples=packed[-1]
     metrics={name:packed[i]/max(samples,1) for i,name in enumerate(LOSS_NAMES)}
-    metrics.update(samples=samples,seconds=seconds.item(),images_per_second=samples/max(seconds.item(),1e-9))
     rows=[row for rank_rows in gather_objects(rows) for row in rank_rows]
     if pq_records is not None: metrics.update(summarize_validation_results(rows))
+    # Include distributed result gathering and global PQ aggregation in the
+    # phase wall time, so validation timings do not hide reporting overhead.
+    timings=torch.tensor([time.perf_counter()-started,postprocess_seconds,score_seconds],dtype=torch.float64,device=device)
+    if _distributed(): dist.all_reduce(timings,op=dist.ReduceOp.MAX)
+    seconds,postprocess_seconds,score_seconds=timings.cpu().tolist()
+    metrics.update(samples=samples,seconds=seconds,images_per_second=samples/max(seconds,1e-9))
+    if pq_records is not None:
+        metrics.update(postprocess_seconds=postprocess_seconds,pq_scoring_seconds=score_seconds)
     return metrics,rows
 
 
@@ -363,7 +378,10 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
             torch.cuda.reset_peak_memory_stats(device)
             train_metrics=train_one_epoch(model,loader,criterion,optimizer,scaler,device,
                 accumulation_steps=config.accumulation_steps,amp=config.amp,channels_last=config.channels_last,grad_clip=config.grad_clip,log_every=config.log_every)
-            do_pq=epoch%config.pq_every==0 or epoch==config.epochs
+            do_pq=should_compute_pq(epoch,config.epochs,config.pq_every)
+            if rank==0:
+                print(f"Epoch {epoch} training finished: {train_metrics['seconds']:.1f}s; "
+                      f"starting validation (PQ={'on' if do_pq else 'off'})",flush=True)
             phase_dataset.select(True); phase_sampler.validation=True
             val_metrics,details=validate_one_epoch(model,loader,criterion,device,
                 amp=config.amp,channels_last=config.channels_last,pq_records=val_records if do_pq else None,
@@ -390,7 +408,11 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
                 save_checkpoint(output/"checkpoints/last.pt",**kwargs)
                 log_training_metrics(output/"logs/history.csv",history)
                 if do_pq: atomic_json(output/f"validation/epoch_{epoch:03d}.json",dict(metrics=val_metrics,records=details))
-                print(f"Epoch {epoch}: loss={train_metrics['loss']:.4f}, val={val_metrics['loss']:.4f}, PQ={val_metrics.get('pq')}",flush=True)
+                print(f"Epoch {epoch}: loss={train_metrics['loss']:.4f}, val={val_metrics['loss']:.4f}, "
+                    f"PQ={val_metrics.get('pq','skipped')}, train={train_metrics['seconds']:.1f}s, "
+                    f"validation={val_metrics['seconds']:.1f}s, "
+                    f"postprocess={val_metrics.get('postprocess_seconds',0.):.1f}s, "
+                    f"PQ scoring={val_metrics.get('pq_scoring_seconds',0.):.1f}s",flush=True)
             if distributed: dist.barrier()
             if stop: break
     except torch.cuda.OutOfMemoryError:

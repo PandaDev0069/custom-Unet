@@ -5,7 +5,7 @@ import pytest
 import torch
 import reference_official as official
 from filament.evaluation import *
-from filament.postprocess import extract_instances
+from filament.postprocess import extract_instances,InstanceMasks
 from filament.submission import *
 
 
@@ -27,8 +27,27 @@ def test_official_evaluator_parity(kind):
     assert np.allclose(iou,ref_iou.numpy()) and np.allclose(dice,ref_dice.numpy())
     reference=official.get_pq_score(pd.DataFrame([dict(iou_matrix=ref_iou,n_gt=len(gt),n_pred=len(pred))]))
     assert evaluate_panoptic_quality(gt,pred)["pq"]==pytest.approx(reference)
+    labels=np.zeros((32,32),np.int32)
+    for index,mask in enumerate(pred,1): labels[mask]=index
+    fast_iou,fast_dice=get_overlap_matrices(gt,InstanceMasks(labels))
+    assert np.array_equal(fast_iou,iou) and np.array_equal(fast_dice,dice)
+    assert evaluate_panoptic_quality(gt,InstanceMasks(labels))==evaluate_panoptic_quality(gt,pred)
     if kind=="overlap": assert evaluate_panoptic_quality(gt,pred)["tp"]==2
     if kind=="half": assert evaluate_panoptic_quality(gt,pred)["tp"]==0
+
+
+def test_label_overlap_path_avoids_materializing_predictions():
+    rng=np.random.default_rng(42)
+    labels=rng.integers(0,81,size=(64,64),dtype=np.int32)
+    gt=[rng.random((64,64))<.25 for _ in range(5)]
+    gt.extend([gt[0].copy(),np.zeros((64,64),bool)])  # Overlapping and empty GT.
+    reference=get_overlap_matrices(gt,list(InstanceMasks(labels)))
+    class LabelsOnly(InstanceMasks):
+        def __getitem__(self,index): raise AssertionError("Do not allocate full masks per prediction")
+    actual=get_overlap_matrices(gt,LabelsOnly(labels))
+    assert all(np.array_equal(a,b) for a,b in zip(actual,reference))
+    with pytest.raises(ValueError,match="shapes differ"):
+        get_overlap_matrices([np.ones((8,8),bool)],InstanceMasks(labels))
 
 
 def test_grouping_and_global_aggregation():

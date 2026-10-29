@@ -130,6 +130,36 @@ The supplied log's approximately 17-minute pre-probe gap cannot be assigned to a
 specific stage from that excerpt; these messages identify it on the next run.
 The probe's caught batch-four OOM was a capacity check, not a failed epoch.
 
+## Validation cost and PQ cadence
+
+The newer supplied two-T4 log shows NCCL initializing in about 0.7 seconds,
+approximately 18.8 minutes generating targets, and training around 9.4 minutes
+per epoch. A timestamp at `Validation native batch 20/36` only covers the first
+20 validation batches; its interval to the epoch summary covers the remaining
+16, not the complete validation phase. Training remains the largest recurring
+cost. Declining pixel losses alone do not establish improving instance quality;
+the reported PQ fluctuates while losses decrease.
+
+The notebook now defaults to `PQ_EVERY=2`: loss and its learning-rate scheduler
+still run every epoch, while instance PQ/checkpoint selection runs on the first,
+every second and final epoch. Early-stopping patience still counts PQ evaluations,
+so patience 8 covers roughly 16 epochs at this cadence. Setting `PQ_EVERY=1`
+restores every-epoch scoring. `Config` retains its library default of one.
+
+PQ uses counts of disjoint prediction IDs under each independent GT mask. It
+avoids constructing and RLE-encoding a native-size binary mask for every
+predicted instance. Original GT overlaps/disconnected regions remain intact,
+and every IoU strictly above 0.5 still counts; no assignment algorithm is added.
+Arbitrary independent prediction masks keep the original COCO RLE path.
+
+Epoch summaries/history now separate training and complete validation wall time,
+CPU postprocessing and PQ scoring (including original GT decoding). CPU timings
+are maximum per-rank accumulated work, not additional wall time to add to
+validation. These distinguish GPU forward/loss work from morphology and overlap
+work. No extra CPU pool or GPU instance-mask stack is introduced. Keep the
+proven native microbatch two: the probe's free-memory reading follows its work,
+whereas peak memory and the earlier batch-four OOM determine safe capacity.
+
 ## Checkpoints, selection and logs
 
 `best.pt` is updated only when global instance PQ strictly improves; `last.pt`

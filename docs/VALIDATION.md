@@ -1,5 +1,32 @@
 # Executed validation
 
+## PQ validation performance update (2026-10-29)
+
+- CUDA suite with native probing: **40 passed, 1 two-GPU-only test skipped**
+  ([XML](../validation_runs/pq_speed_gpu_tests.xml)). CPU suite: **37 passed,
+  4 CUDA-only skipped** ([XML](../validation_runs/pq_speed_cpu_tests.xml)).
+- Exact label-count/RLE parity covers overlapping/disconnected GT, strict 0.5
+  threshold, empty cases and randomized fragmented predictions. A guard verifies
+  the fast path does not materialize one dense mask per predicted instance.
+- First/every-second/final PQ cadence and unchanged every-epoch validation loss
+  pass regression checks. After including distributed aggregation in phase timing,
+  the targeted 14-test suite and two-rank Gloo/loader checks passed again.
+- All 53 code cells of the current standalone notebook completed in native smoke
+  mode on one RTX 3070 Ti Laptop GPU with four loader workers
+  ([executed notebook](../validation_runs/executed_pq_speed_smoke.ipynb)).
+- A synthetic CPU overlap benchmark (2048-square, 8 independent GT masks,
+  256 disjoint predictions) gave median **4.9854 s original / 0.07079 s label
+  counts**, about 70x for overlap calculation alone. Matrices were identical.
+  This is not an epoch or Kaggle throughput claim
+  ([measurements](../validation_runs/pq_overlap_benchmark.json)).
+- The supplied Kaggle log shows 2.22 s/training batch, estimated 9.4 minutes of
+  training per epoch, and 18.76 minutes preparing targets. Validation batch 20/36
+  is not its start. See [log analysis](../validation_runs/pq_training_log_analysis.json).
+
+The updated pipeline has not been benchmarked on dual T4s locally. The original
+user settings were preserved except for the visible `PQ_EVERY=2` control; the
+pre-update notebook is in `validation_runs/pre_pq_speed_notebook.ipynb`.
+
 ## T4 log fixes (2026-10-29)
 
 - Reproduced the reported `(9,9,3,1)` versus `(9,1,3,1)` grayscale CUDA gradient

@@ -48,3 +48,20 @@ def test_persistent_worker_epoch_state(record_factory,tmp_path):
     assert not torch.equal(first,second)
     assert torch.equal(second[0],dataset[0]["image"])
     del loader
+
+
+def test_validation_loss_and_pq_timings(record_factory,tmp_path):
+    mask=np.zeros((32,32),bool); mask[4:25,10:14]=True
+    records=cache_training_targets([record_factory([mask],f"timing{i}") for i in range(3)],tmp_path/"timings")
+    loader=DataLoader(FullImageDataset(records),batch_size=2)
+    class FixedMaps(torch.nn.Module):
+        def forward(self,x): return torch.cat((x*20-10,torch.full_like(x,-10)),dim=1)
+    model=FixedMaps(); criterion=FilamentPQProxyLoss()
+    scored,details=validate_one_epoch(model,loader,criterion,"cpu",amp=False,pq_records=records,
+        postprocess_config=dict(method="components",min_area=1))
+    loss_only,no_details=validate_one_epoch(model,loader,criterion,"cpu",amp=False)
+    assert scored["pq"]==1 and len(details)==3
+    assert scored["postprocess_seconds"]>=0 and scored["pq_scoring_seconds"]>=0
+    assert scored["seconds"]>=scored["pq_scoring_seconds"]
+    assert scored["loss"]==pytest.approx(loss_only["loss"])
+    assert loss_only["samples"]==3 and no_details==[] and "pq" not in loss_only

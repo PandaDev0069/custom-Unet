@@ -15,6 +15,24 @@ def _rles(layers):
 
 def get_overlap_matrices(gt_layers, pred_layers) -> tuple[np.ndarray, np.ndarray]:
     """Independent masks -> float64 GT-by-prediction IoU and Dice arrays."""
+    labels=getattr(pred_layers,"labels",None)
+    if labels is not None:
+        # Extracted predictions are disjoint labels, but original GT masks can
+        # overlap or contain disconnected regions. Count prediction IDs under
+        # each independent GT mask; never build/encode N_pred full-size masks.
+        # Counts are integers, preserving the strict organizer IoU>0.5 rule.
+        labels=np.asarray(labels)
+        count=len(pred_layers)
+        areas=np.bincount(labels.ravel(),minlength=count+1)[1:]
+        iou=np.zeros((len(gt_layers),count),dtype=np.float64)
+        for index,mask in enumerate(gt_layers):
+            if hasattr(mask,"detach"): mask=mask.detach().cpu().numpy()
+            mask=np.asarray(mask,dtype=bool)
+            if mask.shape!=labels.shape: raise ValueError("GT and prediction shapes differ")
+            intersection=np.bincount(labels[mask],minlength=count+1)[1:]
+            union=int(mask.sum())+areas-intersection
+            np.divide(intersection,union,out=iou[index],where=union>0)
+        return iou,2*iou/(1+iou)
     gt, pred = _rles(gt_layers), _rles(pred_layers)
     if not gt or not pred:
         return np.zeros((len(gt),len(pred))), np.zeros((len(gt),len(pred)))

@@ -14,6 +14,10 @@ four-thread pools. Validation and test inference keep one model on each GPU and
 process full images concurrently. FP16, pinned/prefetched loading, channels-last,
 and cuDNN autotuning are enabled; real-backward probes select microbatch 1 or 2
 within each GPU's memory limit. The two 15 GiB memories remain separate.
+Validation loss runs every epoch. The notebook defaults to `PQ_EVERY = 2` for
+instance scoring/checkpoint selection on the first, every second and final epoch;
+set it to 1 for every epoch. Exclusive prediction labels accelerate CPU overlap
+counting while preserving independent, possibly overlapping ground-truth masks.
 
 The primary model is the saved four-pool `ModifiedUNet`, extended to foreground
 and separation logits. Original independent COCO annotation masks remain intact,

@@ -1,0 +1,20 @@
+{
+  "original_rle": {
+    "median_seconds": 4.985436999999365,
+    "seconds": [
+      4.227839099999983,
+      4.985436999999365,
+      5.053195399999822
+    ]
+  },
+  "label_counts": {
+    "median_seconds": 0.07078639999963343,
+    "seconds": [
+      0.07078639999963343,
+      0.07026050000058603,
+      0.07202439999673516
+    ]
+  },
+  "speedup": 70.42930562968567,
+  "scope": "Synthetic CPU overlap calculation only; 2048-square, 8 independent GT masks, 256 disjoint predicted instances. Not end-to-end throughput."
+}

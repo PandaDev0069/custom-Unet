@@ -1,0 +1,102 @@
+{
+  "source": "User-provided Kaggle training log; duplicate pasted blocks removed",
+  "median_training_batch_seconds": 2.219999999999982,
+  "estimated_training_seconds_per_epoch": 563.8799999999954,
+  "target_preparation_seconds": 1125.4,
+  "nccl_initialization_seconds": 0.7000000000000455,
+  "epochs": [
+    {
+      "epoch": 1,
+      "epoch_wall_seconds": 616.6,
+      "train_loss": 0.6551,
+      "val_loss": 0.6181,
+      "pq": 0.0,
+      "final_16_validation_batches_and_reporting_seconds": 22.2
+    },
+    {
+      "epoch": 2,
+      "epoch_wall_seconds": 598.8,
+      "train_loss": 0.6008,
+      "val_loss": 0.5839,
+      "pq": 0.0,
+      "final_16_validation_batches_and_reporting_seconds": 15.3
+    },
+    {
+      "epoch": 3,
+      "epoch_wall_seconds": 598.1,
+      "train_loss": 0.5695,
+      "val_loss": 0.5552,
+      "pq": 0.0,
+      "final_16_validation_batches_and_reporting_seconds": 15.3
+    },
+    {
+      "epoch": 4,
+      "epoch_wall_seconds": 611.6,
+      "train_loss": 0.5419,
+      "val_loss": 0.5282,
+      "pq": 0.0,
+      "final_16_validation_batches_and_reporting_seconds": 21.7
+    },
+    {
+      "epoch": 5,
+      "epoch_wall_seconds": 649.2,
+      "train_loss": 0.516,
+      "val_loss": 0.5031,
+      "pq": 0.06662870367974234,
+      "final_16_validation_batches_and_reporting_seconds": 39.1
+    },
+    {
+      "epoch": 6,
+      "epoch_wall_seconds": 662.1,
+      "train_loss": 0.4918,
+      "val_loss": 0.4809,
+      "pq": 0.05978605793649889,
+      "final_16_validation_batches_and_reporting_seconds": 45.3
+    },
+    {
+      "epoch": 7,
+      "epoch_wall_seconds": 663.7,
+      "train_loss": 0.4708,
+      "val_loss": 0.4612,
+      "pq": 0.044784365642462215,
+      "final_16_validation_batches_and_reporting_seconds": 46.2
+    },
+    {
+      "epoch": 8,
+      "epoch_wall_seconds": 647.0,
+      "train_loss": 0.4523,
+      "val_loss": 0.4438,
+      "pq": 0.08830192072723264,
+      "final_16_validation_batches_and_reporting_seconds": 38.1
+    },
+    {
+      "epoch": 9,
+      "epoch_wall_seconds": 656.2,
+      "train_loss": 0.4345,
+      "val_loss": 0.426,
+      "pq": 0.08886961675017767,
+      "final_16_validation_batches_and_reporting_seconds": 42.6
+    },
+    {
+      "epoch": 10,
+      "epoch_wall_seconds": 660.2,
+      "train_loss": 0.4176,
+      "val_loss": 0.4112,
+      "pq": 0.04249242706399413,
+      "final_16_validation_batches_and_reporting_seconds": 45.6
+    },
+    {
+      "epoch": 11,
+      "epoch_wall_seconds": 640.5,
+      "train_loss": 0.4028,
+      "val_loss": 0.3954,
+      "pq": 0.11087961200899178,
+      "final_16_validation_batches_and_reporting_seconds": 35.9
+    }
+  ],
+  "notes": [
+    "Validation batch 20 is not validation start.",
+    "Free VRAM after probe work is not peak training headroom; batch 4 previously OOMed.",
+    "Training/validation loss alone cannot establish instance quality or rule out overfitting."
+  ]
+}

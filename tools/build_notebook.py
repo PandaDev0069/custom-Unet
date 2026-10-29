@@ -150,13 +150,14 @@ from filament.visualization import *
 MODE = 'full'  # 'smoke' or 'full'
 CPU_WORKERS = 4
 REQUESTED_GPUS = 2
+PQ_EVERY = 2  # Validation loss every epoch; instance PQ on first/every 2nd/final epoch.
 DATA_ROOT_OVERRIDE = ''
 RUN_TRAINING = True
 RUN_TEST_INFERENCE = MODE == 'full'
 ON_KAGGLE = os.name != 'nt' and Path('/kaggle/working').exists() and Path('/kaggle/input').exists()
 OUTPUT_DIR = (Path('/kaggle/working') if ON_KAGGLE else Path.cwd()) / f'filament_{MODE}'
 cfg = Config(data_root=DATA_ROOT_OVERRIDE, output_dir=str(OUTPUT_DIR), smoke=MODE == 'smoke',
-             workers=CPU_WORKERS, prefetch_factor=2, deterministic=False)
+             workers=CPU_WORKERS, prefetch_factor=2, deterministic=False, pq_every=PQ_EVERY)
 # deterministic=False enables cuDNN autotuning for fixed native image shapes.
 # Set it True for deterministic kernels, at a potential throughput cost.
 if MODE == 'smoke':
@@ -394,7 +395,12 @@ Logs stream to this cell and disk. Interrupting training leaves the last complet
 epoch intact; set `cfg.resume` in section 5 and rerun preparation/training.
 Rank-labelled startup timings identify import, CUDA, NCCL, probe and loader waits.
 Single-host torchrun uses an explicit loopback rendezvous. Smoke mode verifies
-execution, not model quality.
+execution, not model quality. Each epoch logs separate training/validation wall
+times and maximum per-rank CPU postprocessing/PQ-scoring times. Validation loss
+runs every epoch; `PQ_EVERY=2` evaluates instance PQ on the first, every second and
+final epoch. Set it to 1 for every-epoch checkpoint selection. Early-stopping
+patience counts PQ evaluations. All strict IoU>0.5 pairs still count, including
+overlapping GT; disjoint prediction IDs accelerate overlap counting on the CPU.
 """)
     code("""if RUN_TRAINING:
     # Avoid retaining parent-process CUDA models while workers train.

@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader,Dataset
 from unet import ModifiedUNet
 from filament.losses import FilamentPQProxyLoss,instance_boundaries
-from filament.training import (run_epoch,save_checkpoint,load_checkpoint,resume_training,update_early_stopping,rng_state,probe_batch_sizes,_device_batch)
+from filament.training import (run_epoch,save_checkpoint,load_checkpoint,resume_training,update_early_stopping,rng_state,probe_batch_sizes,_device_batch,should_compute_pq)
 from filament.config import Config
 from filament.model import build_model
 
@@ -57,6 +57,11 @@ class MSELoss(torch.nn.Module):
     def forward(self,logits,targets):
         loss=((logits-targets["target"])**2).mean()
         return dict(loss=loss,bce=loss.detach(),dice=loss.detach(),boundary=loss.detach(),cldice=loss.detach())
+
+
+@pytest.mark.parametrize("epochs,every,expected",[(1,2,[1]),(5,2,[1,2,4,5]),(6,5,[1,5,6]),(4,1,[1,2,3,4])])
+def test_pq_cadence_includes_first_and_final(epochs,every,expected):
+    assert [epoch for epoch in range(1,epochs+1) if should_compute_pq(epoch,epochs,every)]==expected
 
 
 def test_exact_short_accumulation_and_validation(tmp_path):

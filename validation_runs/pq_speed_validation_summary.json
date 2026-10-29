@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-29",
+  "tests": {
+    "pq_speed_cpu_tests.xml": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "4",
+        "tests": "41",
+        "time": "13.082",
+        "timestamp": "2026-10-29T14:58:38.200781+09:00",
+        "hostname": "PANTA_AASHISH"
+      }
+    ],
+    "pq_speed_gpu_tests.xml": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "1",
+        "tests": "41",
+        "time": "17.171",
+        "timestamp": "2026-10-29T14:58:37.105331+09:00",
+        "hostname": "PANTA_AASHISH"
+      }
+    ]
+  },
+  "notebook": {
+    "total_cells": 102,
+    "executed_code_cells": 53,
+    "errors": 0
+  },
+  "overlap_benchmark": {
+    "original_rle": {
+      "median_seconds": 4.985436999999365,
+      "seconds": [
+        4.227839099999983,
+        4.985436999999365,
+        5.053195399999822
+      ]
+    },
+    "label_counts": {
+      "median_seconds": 0.07078639999963343,
+      "seconds": [
+        0.07078639999963343,
+        0.07026050000058603,
+        0.07202439999673516
+      ]
+    },
+    "speedup": 70.42930562968567,
+    "scope": "Synthetic CPU overlap calculation only; 2048-square, 8 independent GT masks, 256 disjoint predicted instances. Not end-to-end throughput."
+  },
+  "dual_t4_benchmark_performed": false
+}
