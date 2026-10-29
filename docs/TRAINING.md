@@ -68,14 +68,37 @@ flowchart TD
 
 ## Loaders, CPU and reproducibility
 
-`workers` is a total budget split across ranks, not workers per GPU. Zero is the
-default for the requested one-core host. With positive workers, spawned workers
-use one CPU thread, persistent worker state and configurable prefetch (default
-one). Pinning is enabled for CUDA. Training uses a DistributedSampler with
+`workers` is a total budget split across ranks, not workers per GPU. The default
+is four: two spawned loader processes per GPU on a dual-T4 host. Workers use one
+native-library thread and prefetch two batches each. A shared phase flag and
+phase sampler reuse one persistent pool across training and validation, avoiding
+eight loader workers. `workers=0` selects serial loading for debugging.
+Pinning is enabled for CUDA. Training uses a DistributedSampler with
 `set_epoch`; its padding can repeat a few records to give equal rank lengths.
 Validation uses disjoint indices without repetition, can leave a rank with zero
 batches, and forwards through the unwrapped module to avoid unequal collective
 counts. Metric reduction happens after all local batches finish.
+
+Preparation/indexing, target caching and statistics use a bounded four-thread
+pool. Identical target fingerprints share a locked write; per-record annotation
+metadata stays separate. The notebook reuses its initial dataset index instead
+of decoding all source images again during preparation. Postprocessing search
+parallelizes trials without nested source pools and retains first-trial tie
+handling. Matplotlib output and artifact assembly stay on the calling thread.
+
+After training, `MultiDevicePredictor` uses an exclusive queue slot per model/GPU.
+Four CPU jobs overlap reading, forwarding on two GPUs, CPU instance extraction,
+and RLE encoding. Each GPU processes one complete image at a time. No model is
+forwarded concurrently by two threads. Ordered, bounded results keep memory use
+proportional to workers, preserve CSV order and retain resumable atomic journals.
+
+Notebook defaults enable cuDNN autotuning (`deterministic=False`) and probe
+microbatches 1, 2 and 4 under the existing 85% per-device memory limit. FP16,
+channels-last and activation checkpointing remain enabled. Set
+`cfg.deterministic=True` before preparation to resume an older deterministic run;
+resume deliberately rejects changes to that setting. Full GPU utilization and
+throughput depend on the data and selected model; measure epoch seconds and
+images/second in `logs/history.csv` and per-rank hardware in `runtime_report.json`.
 
 Augmentation RNG depends on seed, epoch and item index, and shared epoch state
 reaches persistent workers. Loader sampling generators are seeded per epoch/rank.

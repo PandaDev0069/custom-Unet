@@ -30,7 +30,7 @@ def main():
     elif args.command=="evaluate":
         from .training import load_checkpoint
         from .model import build_model
-        from .inference import cache_validation_predictions,search_postprocessing
+        from .inference import cache_validation_predictions,search_postprocessing,make_predictor
         from .visualization import plot_training,plot_distributions,plot_error_gallery
         import matplotlib.pyplot as plt
         output=Path(config.output_dir)
@@ -40,12 +40,15 @@ def main():
         model=build_model(effective.model)
         model.load_state_dict(state["model"]); del state
         device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"); model=model.to(device)
+        if effective.channels_last: model.to(memory_format=torch.channels_last)
+        predictor=make_predictor(model,effective,device,args.gpus)
         manifest=cache_validation_predictions(model,runtime["val_records"],output/"validation_predictions",device,
             dict(checkpoint_sha256=file_hash(checkpoint),normalization=effective.normalization,split_fingerprint=runtime["split_fingerprint"]),
+            workers=effective.workers,predictor=predictor,
             amp=effective.amp,channels_last=effective.channels_last,normalization=effective.normalization)
         grid=dict(method=["components","boundary","watershed"],foreground_threshold=[.4,.5,.6],min_area=[10,20])
         if effective.smoke: grid=dict(method=["components","boundary"],foreground_threshold=[.5])
-        best,frame=search_postprocessing(runtime["val_records"],manifest,grid,output/"search",effective.postprocess)
+        best,frame=search_postprocessing(runtime["val_records"],manifest,grid,output/"search",effective.postprocess,workers=effective.workers)
         details=json.loads((output/"search/best_validation_details.json").read_text(encoding="utf8"))
         plt.close(plot_training(output/"logs/history.csv",output/"figures"))
         plt.close(plot_distributions(details,output/"figures/overlap_distributions.png"))
@@ -55,7 +58,7 @@ def main():
         from .data import find_dataset_root,discover_test_images,read_grayscale
         from .training import load_checkpoint
         from .model import build_model
-        from .inference import predict_full_image
+        from .inference import make_predictor
         from .postprocess import extract_instances
         from .submission import generate_submission
         output=Path(config.output_dir)
@@ -65,16 +68,18 @@ def main():
         device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         model=build_model(config.model).to(device); model.load_state_dict(state["model"])
         del state
+        if config.channels_last: model.to(memory_format=torch.channels_last)
+        predictor=make_predictor(model,config,device,args.gpus)
         selection=json.loads((output/"search/best_postprocessing.json").read_text(encoding="utf8"))
         if selection["prediction_provenance"]["checkpoint_sha256"]!=file_hash(checkpoint):
             raise ValueError("Postprocessing selection belongs to a different checkpoint")
         post=selection["postprocess"]
-        paths=discover_test_images(find_dataset_root(config.data_root))
+        paths=discover_test_images(find_dataset_root(config.data_root),workers=config.workers)
         def predict(path):
-            p=predict_full_image(model,read_grayscale(path),device,config.amp,config.channels_last,config.normalization)
+            p=predictor(path)
             return extract_instances(p.astype(np.float16),post)[1]
         report=generate_submission(paths,predict,output/"submission.csv",output/"inference_journal",
-            dict(checkpoint_sha256=file_hash(checkpoint),postprocess=post,normalization=config.normalization))
+            dict(checkpoint_sha256=file_hash(checkpoint),postprocess=post,normalization=config.normalization),workers=config.workers)
         print(report)
 
 

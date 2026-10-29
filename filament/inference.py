@@ -5,7 +5,9 @@ import os
 import time
 import uuid
 from dataclasses import asdict
+from contextlib import nullcontext
 from pathlib import Path
+from queue import Queue
 import numpy as np
 import pandas as pd
 import torch
@@ -13,6 +15,49 @@ from .data import read_grayscale, normalize_image, cached_instances, group_annot
 from .evaluation import evaluate_panoptic_quality, summarize_validation_results
 from .io import atomic_json, file_hash, fingerprint
 from .postprocess import extract_instances, PostprocessConfig
+from .parallel import ordered_map
+
+
+class MultiDevicePredictor:
+    """One model per GPU; CPU jobs borrow an exclusive GPU slot for a forward.
+
+    Call concurrently through ordered_map. Full images are distributed between
+    GPUs, so batch one uses both T4s without splitting an image or pooling VRAM.
+    """
+    def __init__(self, models_and_devices, **predict_options):
+        if not models_and_devices: raise ValueError("At least one inference model is required")
+        self.slots=Queue()
+        for model, device in models_and_devices:
+            model.eval()
+            self.slots.put((model,torch.device(device)))
+        self.predict_options=predict_options
+
+    def __call__(self, path):
+        image=read_grayscale(path)
+        model,device=self.slots.get()
+        try:
+            with torch.cuda.device(device) if device.type=="cuda" else nullcontext():
+                return predict_full_image(model,image,device,**self.predict_options)
+        finally:
+            self.slots.put((model,device))
+
+
+def make_predictor(model, config, device, num_gpus=None):
+    """Reuse the loaded model and build a separate replica on each extra GPU."""
+    from .model import build_model
+    device=torch.device(device)
+    models=[(model,device)]
+    if device.type=="cuda":
+        count=min(2,torch.cuda.device_count()) if num_gpus is None else num_gpus
+        if not 1<=count<=torch.cuda.device_count(): raise ValueError("Requested inference GPUs unavailable")
+        primary=torch.cuda.current_device() if device.index is None else device.index
+        for index in [i for i in range(torch.cuda.device_count()) if i!=primary][:count-1]:
+            replica=build_model(config.model).to(torch.device("cuda",index))
+            replica.load_state_dict(model.state_dict())
+            if config.channels_last: replica.to(memory_format=torch.channels_last)
+            models.append((replica,torch.device("cuda",index)))
+    return MultiDevicePredictor(models,amp=config.amp,channels_last=config.channels_last,
+                                normalization=config.normalization)
 
 
 def predict_full_image(model, image: np.ndarray, device, amp=True, channels_last=True,
@@ -30,19 +75,24 @@ def predict_full_image(model, image: np.ndarray, device, amp=True, channels_last
     return logits[0].float().sigmoid().cpu().numpy()
 
 
-def cache_validation_predictions(model, records, cache_dir, device, provenance, **predict_options) -> dict:
+def cache_validation_predictions(model, records, cache_dir, device, provenance, workers=0,
+                                 predictor=None, **predict_options) -> dict:
     """One forward pass per source; float16 NPY maps load using mmap during search."""
     namespace=fingerprint(dict(provenance=provenance,predict_options=predict_options))
     directory=Path(cache_dir)/namespace; directory.mkdir(parents=True,exist_ok=True)
     manifest=dict(provenance=provenance,predict_options=predict_options,entries={})
-    for name,rows in group_annotations_by_source(records).items():
+    if predictor is not None and predictor.predict_options!=predict_options:
+        raise ValueError("Predictor options must match prediction-cache provenance")
+    predictor=predictor or MultiDevicePredictor([(model,device)],**predict_options)
+    def cache_source(item):
+        name,rows=item
         r=rows[0]
         source_hash=file_hash(r["image_path"])
         path=directory/(fingerprint(dict(name=name,source_hash=source_hash))+".npy")
         started=time.perf_counter()
         cache_hit=path.exists()
         if not cache_hit:
-            probabilities=predict_full_image(model,read_grayscale(r["image_path"]),device,**predict_options)
+            probabilities=predictor(r["image_path"])
             temporary=path.with_name(path.name+f".{uuid.uuid4().hex}.tmp")
             try:
                 with temporary.open("wb") as handle: np.save(handle,probabilities.astype(np.float16),allow_pickle=False)
@@ -51,15 +101,17 @@ def cache_validation_predictions(model, records, cache_dir, device, provenance, 
         with path.open("rb") as handle:
             array=np.load(handle,allow_pickle=False)
             if array.shape!=(2,r["height"],r["width"]) or not np.isfinite(array).all(): raise ValueError("Corrupt prediction cache")
-        manifest["entries"][name]=dict(path=str(path.resolve()),source_hash=source_hash,
+        return name,dict(path=str(path.resolve()),source_hash=source_hash,
             prediction_seconds=None if cache_hit else time.perf_counter()-started,cache_hit=cache_hit)
+    manifest["entries"].update(ordered_map(cache_source,group_annotations_by_source(records).items(),workers))
     atomic_json(directory/"manifest.json",manifest)
     return manifest
 
 
-def evaluate_cached_predictions(records, manifest, postprocess_config) -> tuple[dict,list]:
-    rows=[]
-    for name,annotation_records in group_annotations_by_source(records).items():
+def evaluate_cached_predictions(records, manifest, postprocess_config, workers=0) -> tuple[dict,list]:
+    def evaluate_source(item):
+        name,annotation_records=item
+        rows=[]
         entry=manifest["entries"][name]
         if file_hash(annotation_records[0]["image_path"])!=entry["source_hash"]:
             raise ValueError(f"Source image changed after validation caching: {name}")
@@ -71,16 +123,20 @@ def evaluate_cached_predictions(records, manifest, postprocess_config) -> tuple[
             result=evaluate_panoptic_quality(cached_instances(r),instances)
             rows.append(dict(**result,image_id=r["image_id"],file_name=name,
                 postprocess_seconds=seconds,prediction_seconds=entry["prediction_seconds"]))
+        return rows
+    rows=[row for source_rows in ordered_map(evaluate_source,group_annotations_by_source(records).items(),workers)
+          for row in source_rows]
     return summarize_validation_results(rows),rows
 
 
-def search_postprocessing(records, manifest, grid: dict, output_dir, base_config=None) -> tuple[dict,pd.DataFrame]:
+def search_postprocessing(records, manifest, grid: dict, output_dir, base_config=None, workers=0) -> tuple[dict,pd.DataFrame]:
     """Tune validation-only postprocessing; predictions are never recomputed."""
     output=Path(output_dir); output.mkdir(parents=True,exist_ok=True)
     base=dict(base_config or {})
     combinations=itertools.product(*(grid[k] for k in grid))
     trials=[]; best=None
-    for index,values in enumerate(combinations):
+    def evaluate_trial(item):
+        index,values=item
         cfg=PostprocessConfig(**(base | dict(zip(grid,values))))
         started=time.perf_counter()
         summary,details=evaluate_cached_predictions(records,manifest,asdict(cfg))
@@ -88,6 +144,9 @@ def search_postprocessing(records, manifest, grid: dict, output_dir, base_config
         dices=[v for r in details for v in r["dice_distribution"]]
         row=dict(trial=index,**asdict(cfg),**summary,mean_positive_iou=float(np.mean(ious)) if ious else 0.,
                  mean_positive_dice=float(np.mean(dices)) if dices else 0.,seconds=time.perf_counter()-started)
+        return index,cfg,summary,details,row
+    # Parallelize trials, not trials AND sources, to respect the total CPU budget.
+    for index,cfg,summary,details,row in ordered_map(evaluate_trial,enumerate(combinations),workers):
         trials.append(row)
         pd.DataFrame(trials).to_csv(output/"postprocessing_trials.csv",index=False)
         # Deterministic tie break: first configuration wins.

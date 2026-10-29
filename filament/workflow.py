@@ -14,14 +14,14 @@ from .data import (find_dataset_root,make_records,create_train_val_split,load_sp
 from .io import atomic_json, fingerprint
 
 
-def prepare_experiment(config: Config, statistics=True) -> dict:
+def prepare_experiment(config: Config, statistics=True, indexed=None) -> dict:
     config.validate()
     root=find_dataset_root(config.data_root)
     config.data_root=str(root)
     output=Path(config.output_dir).resolve(); output.mkdir(parents=True,exist_ok=True)
     config.output_dir=str(output)
-    records,integrity=make_records(root,config.image_size)
-    integrity["test_source_images"]=len(discover_test_images(root,config.image_size))
+    records,integrity=indexed if indexed is not None else make_records(root,config.image_size,workers=config.workers)
+    integrity["test_source_images"]=len(discover_test_images(root,config.image_size,workers=config.workers))
     atomic_json(output/"data/integrity.json",integrity)
     split_path=output/"split_manifest.json"
     manifest=load_split_manifest(split_path,records) if split_path.exists() else create_train_val_split(
@@ -36,10 +36,10 @@ def prepare_experiment(config: Config, statistics=True) -> dict:
         radius=config.separation_radius,centerline=config.centerline,
         selected_ids=[r["image_id"] for r in selected],smoke=config.smoke,target_version=TARGET_VERSION))
     if statistics:
-        summary,rows=summarize_dataset(selected)
+        summary,rows=summarize_dataset(selected,workers=config.workers)
         atomic_json(output/"data/statistics.json",summary)
         pd.DataFrame(rows).to_csv(output/"data/statistics_per_record.csv",index=False)
-    cached=cache_training_targets(selected,output/"targets",config.separation_radius,config.centerline)
+    cached=cache_training_targets(selected,output/"targets",config.separation_radius,config.centerline,workers=config.workers)
     by_id={r["image_id"]:r for r in cached}
     train_records=[by_id[i] for i in manifest["train"] if i in by_id]
     val_records=[by_id[i] for i in manifest["val"] if i in by_id]

@@ -27,14 +27,14 @@ class Config:
     scheduler: str = "plateau"
     accumulation_steps: int = 4
     microbatch: int | str = "auto"
-    batch_candidates: list = field(default_factory=lambda: [1, 2])
+    batch_candidates: list = field(default_factory=lambda: [1, 2, 4])
     width_fallbacks: list = field(default_factory=lambda: [8])
     memory_fraction: float = .85
     grad_clip: float = 1.
     amp: bool = True
     channels_last: bool = True
-    workers: int = 0
-    prefetch_factor: int = 1
+    workers: int = 4  # Total CPU worker budget, split across GPU ranks.
+    prefetch_factor: int = 2
     log_every: int = 20
     resume: str = ""
     deterministic: bool = True

@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import uuid
+from threading import Lock
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from torch.utils.data import Dataset
 
 from .io import atomic_json, file_hash, fingerprint
 from .targets import build_targets, load_image_instances
+from .parallel import ordered_map
 
 ANNOTATION_FILENAME = "MAGFiLO_1.0_Annotations_kaggle2026_train.json"
 TARGET_VERSION = "independent-coco-separation-8connected-v2"
@@ -34,18 +36,19 @@ def find_dataset_root(override: str = "") -> Path:
     raise FileNotFoundError("Set data_root to the MAGFiLO directory containing train/ and test/")
 
 
-def discover_test_images(root: Path, expected_size: int = 2048) -> list[Path]:
+def discover_test_images(root: Path, expected_size: int = 2048, workers=0) -> list[Path]:
     paths = sorted(p.resolve() for p in (Path(root) / "test/test_images").iterdir()
                    if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
     if not paths: raise ValueError("No test images discovered")
     if len({p.stem for p in paths}) != len(paths): raise ValueError("Duplicate test stems")
-    for path in paths:
+    def validate(path):
         with Image.open(path) as im:
             if im.size != (expected_size, expected_size): raise ValueError(f"Non-native test image {path}")
+    for _ in ordered_map(validate, paths, workers): pass
     return paths
 
 
-def make_records(root: Path, expected_size: int = 2048, hash_images: bool = True) -> tuple[list, dict]:
+def make_records(root: Path, expected_size: int = 2048, hash_images: bool = True, workers=0) -> tuple[list, dict]:
     """Index annotation records; validate images once and fingerprint decoded pixels.
 
     Multiple annotators remain separate records. Pixel-identical filenames are
@@ -67,18 +70,25 @@ def make_records(root: Path, expected_size: int = 2048, hash_images: bool = True
         by_image[str(a["image_id"])].append(a)
     files, records = {}, []
     image_dir = (root / "train/train_images").resolve()
+    def inspect(im):
+        name = im["file_name"]
+        path = (image_dir / name).resolve()
+        if not path.is_relative_to(image_dir): raise ValueError("Image path escapes dataset")
+        shape = (int(im["height"]), int(im["width"]))
+        if shape != (expected_size, expected_size): raise ValueError(f"Non-native annotation dimensions: {name}")
+        if not path.is_file(): raise FileNotFoundError(path)
+        with Image.open(path) as opened:
+            if opened.size != shape[::-1]: raise ValueError(f"JPEG and annotation dimensions differ: {name}")
+        pixels = read_grayscale(path, shape)
+        return name, hashlib.sha256(pixels.tobytes()).hexdigest() if hash_images else name
+    unique = {im["file_name"]: im for im in data["images"]}
+    files.update(ordered_map(inspect, unique.values(), workers))
     for im in data["images"]:
         name = im["file_name"]
         path = (image_dir / name).resolve()
         if not path.is_relative_to(image_dir): raise ValueError("Image path escapes dataset")
         shape = (int(im["height"]), int(im["width"]))
         if shape != (expected_size, expected_size): raise ValueError(f"Non-native annotation dimensions: {name}")
-        if name not in files:
-            if not path.is_file(): raise FileNotFoundError(path)
-            with Image.open(path) as opened:
-                if opened.size != shape[::-1]: raise ValueError(f"JPEG and annotation dimensions differ: {name}")
-            pixels = read_grayscale(path, shape)
-            files[name] = hashlib.sha256(pixels.tobytes()).hexdigest() if hash_images else name
         records.append(dict(image_id=str(im["id"]), file_name=name, image_path=str(path),
             source_hash=files[name], height=shape[0], width=shape[1], annotations=by_image[str(im["id"])],
             annotation_ids=[str(a["id"]) for a in by_image[str(im["id"])]]))
@@ -160,27 +170,33 @@ def load_split_manifest(path, records: list) -> dict:
     return result
 
 
-def cache_training_targets(records: list, cache_dir, radius=1, centerline=False) -> list:
+def cache_training_targets(records: list, cache_dir, radius=1, centerline=False, workers=0) -> list:
     """Atomic compressed per-record arrays; original COCO masks remain in compact JSON."""
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cached = []
-    for index, r in enumerate(records):
+    # Identical annotations may share one target file. Serialize only colliding
+    # fingerprints, including concurrent Windows replaces of the same path.
+    locks = [Lock() for _ in range(64)]
+    def cache_record(r):
         key = fingerprint(dict(version=TARGET_VERSION, shape=[r["height"],r["width"]],
             annotations=r["annotations"], radius=radius, centerline=centerline))
         path = cache_dir / f"{key}.npz"
-        original_path = cache_dir / f"{key}.json"
-        if not path.exists():
-            targets = build_targets(r, radius, centerline)
-            temporary = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
-            try:
-                with temporary.open("wb") as handle: np.savez_compressed(handle, **targets)
-                os.replace(temporary, path)
-            finally: temporary.unlink(missing_ok=True)
-        atomic_json(original_path, dict(image_id=r["image_id"], height=r["height"], width=r["width"],
-            annotations=r["annotations"], annotation_ids=r["annotation_ids"]))
-        cached.append({k:v for k,v in r.items() if k != "annotations"} | dict(
-            target_path=str(path.resolve()), instances_path=str(original_path.resolve()), target_fingerprint=key))
+        original_path = cache_dir / f"{key}.{fingerprint(r['image_id'])}.json"
+        with locks[int(key[:8], 16) % len(locks)]:
+            if not path.exists():
+                targets = build_targets(r, radius, centerline)
+                temporary = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
+                try:
+                    with temporary.open("wb") as handle: np.savez_compressed(handle, **targets)
+                    os.replace(temporary, path)
+                finally: temporary.unlink(missing_ok=True)
+            atomic_json(original_path, dict(image_id=r["image_id"], height=r["height"], width=r["width"],
+                annotations=r["annotations"], annotation_ids=r["annotation_ids"]))
+        return {k:v for k,v in r.items() if k != "annotations"} | dict(
+            target_path=str(path.resolve()), instances_path=str(original_path.resolve()), target_fingerprint=key)
+    cached = []
+    for index, record in enumerate(ordered_map(cache_record, records, workers)):
+        cached.append(record)
         if (index+1) % 100 == 0: print(f"Cached {index+1}/{len(records)} annotation records", flush=True)
     return cached
 
@@ -190,20 +206,21 @@ def cached_instances(record: dict) -> list:
     return load_image_instances(payload)
 
 
-def summarize_dataset(records: list, small_area=20) -> tuple[dict, list]:
-    """Stream one annotation record at a time; do not retain all dense masks."""
-    rows, areas = [], []
-    for index,r in enumerate(records):
+def summarize_dataset(records: list, small_area=20, workers=0) -> tuple[dict, list]:
+    """Stream bounded parallel annotation records; retain only compact statistics."""
+    def summarize_record(r):
         masks = load_image_instances(r)
         coverage = np.zeros((r["height"], r["width"]), dtype=np.uint32)
         image_areas = []
         for m in masks:
             coverage += m
             image_areas.append(int(m.sum()))
-        areas.extend(image_areas)
-        rows.append(dict(image_id=r["image_id"], file_name=r["file_name"], instances=len(masks),
+        return dict(image_id=r["image_id"], file_name=r["file_name"], instances=len(masks),
             foreground_ratio=float((coverage>0).mean()), overlap_pixels=int((coverage>1).sum()),
-            small_instances=sum(a < small_area for a in image_areas)))
+            small_instances=sum(a < small_area for a in image_areas)), image_areas
+    rows, areas = [], []
+    for index, (row, image_areas) in enumerate(ordered_map(summarize_record, records, workers)):
+        rows.append(row); areas.extend(image_areas)
         if (index+1)%100==0: print(f"Validated {index+1}/{len(records)} annotation records",flush=True)
     summary = dict(records=len(rows), instances=len(areas), small_area=small_area,
         small_instances=sum(a<small_area for a in areas), area_quantiles=(
@@ -263,6 +280,18 @@ class FullImageDataset(Dataset):
             image, targets = augment_sample(image, targets, rng, self.options)
         return {"image":torch.from_numpy(np.ascontiguousarray(image[None])),
             **{k:torch.from_numpy(np.ascontiguousarray(v[None])).float() for k,v in targets.items()}, "index":index}
+
+
+class TrainValidationDataset(Dataset):
+    """Share a single persistent worker pool across sequential train/val phases."""
+    def __init__(self, train, validation):
+        self.train, self.validation = train, validation
+        self._validation = torch.zeros((), dtype=torch.int64).share_memory_()
+
+    def select(self, validation): self._validation.fill_(int(validation))
+    def __len__(self): return len(self.validation if self._validation.item() else self.train)
+    def __getitem__(self, index):
+        return (self.validation if self._validation.item() else self.train)[index]
 
 
 def seed_loader_worker(worker_id):

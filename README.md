@@ -4,8 +4,16 @@ Start with [solar_filament_unet_pq.ipynb](solar_filament_unet_pq.ipynb). It is a
 self-contained Kaggle notebook: attach the competition dataset, select a CUDA
 accelerator, and run top to bottom. No custom module uploads are needed. It
 exports readable Python modules with `%%writefile`, then launches an independent
-training worker. Default `MODE = 'smoke'` runs two native images per partition for
-one epoch. Set `MODE = 'full'` for training, validation search, and test submission.
+training worker. The notebook defaults to `MODE = 'full'`, four CPU workers, and
+two T4 GPUs. Select **GPU T4 x2** in Kaggle, restart the kernel, and run all cells.
+Set `MODE = 'smoke'` to run two native images per partition for one epoch.
+
+The four loader workers are split two per GPU and reused for training/validation.
+Preparation, statistics, postprocessing search, and submission encoding use bounded
+four-thread pools. Validation and test inference keep one model on each GPU and
+process full images concurrently. FP16, pinned/prefetched loading, channels-last,
+and cuDNN autotuning are enabled; real-backward probes select microbatch 1, 2, or 4
+within each GPU's memory limit. The two 15 GiB memories remain separate.
 
 The primary model is the saved four-pool `ModifiedUNet`, extended to foreground
 and separation logits. Original independent COCO annotation masks remain intact,

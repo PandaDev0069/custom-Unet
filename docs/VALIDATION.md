@@ -1,5 +1,27 @@
 # Executed validation
 
+## Four-worker runtime update (2026-10-29)
+
+- CPU suite: **29 passed, 3 CUDA-only skipped**
+  ([XML](../validation_runs/parallel_cpu_tests.xml)).
+- CUDA suite with the native 2048-square probe enabled: **31 passed, 1 skipped**
+  ([XML](../validation_runs/parallel_gpu_tests.xml)). The skipped test requires
+  two physical CUDA GPUs. Hardware was one RTX 3070 Ti Laptop GPU, 8 GiB.
+- Two-rank CPU/Gloo smoke passed with four persistent loader workers sharing
+  training/validation phases; accumulation matches the direct reference and
+  validation counts each source once.
+- Notebook structure/source parity passed: 30 sections, 19 modules, 101 cells.
+- The complete standalone notebook ran successfully in smoke mode with four
+  workers and one CUDA GPU ([executed notebook](../validation_runs/executed_parallel_smoke.ipynb)).
+- Parallel/serial parity covers target arrays, statistics, PQ summaries, search
+  trial order and tie handling, CSV bytes and journal resume. A guarded two-slot
+  CPU model test confirms concurrent device scheduling and exclusive model use.
+
+This update has not been executed on two T4s/NCCL, and no before/after throughput
+claim is made. The earlier evidence below describes the previous runtime.
+
+## Earlier validation (2026-10-19)
+
 Verified 2026-10-19T13:57:18.268077+09:00 (Asia/Tokyo). Machine-readable evidence:
 [`validation_summary.json`](../validation_runs/validation_summary.json).
 

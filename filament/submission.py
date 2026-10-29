@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 from pycocotools import mask as mask_utils
 from .io import atomic_json, fingerprint
+from .parallel import ordered_map
 
 COLUMNS = ["filament_id", "segmentation_rle"]
 
@@ -45,8 +46,8 @@ def build_submission_rows(image_stem: str, instances: list, shape=(2048,2048)) -
 
 
 def generate_submission(test_paths: list, predict_instances, output_path, journal_dir,
-                        provenance: dict, shape=(2048,2048)) -> dict:
-    """One deterministic image at a time, atomic journals and final CSV.
+                        provenance: dict, shape=(2048,2048), workers=0) -> dict:
+    """Bounded parallel inference/RLE journals; one deterministic atomic CSV writer.
 
     predict_instances(path) returns independent bool masks. Journals are bound to
     checkpoint/postprocessing/preprocessing AND test file content signatures by
@@ -61,22 +62,24 @@ def generate_submission(test_paths: list, predict_instances, output_path, journa
     image_counts={}
     output=Path(output_path); output.parent.mkdir(parents=True,exist_ok=True)
     temporary=output.with_name(output.name+f".{uuid.uuid4().hex}.tmp")
+    def process_source(p):
+        source_hash=file_hash(p)
+        journal=journal_dir/(fingerprint(p.stem)+".json")
+        result=json.loads(journal.read_text(encoding="utf8")) if journal.exists() else None
+        if result is None or result.get("source_hash")!=source_hash:
+            rows=build_submission_rows(p.stem,predict_instances(p),shape)
+            result=dict(image_stem=p.stem,source_hash=source_hash,rows=rows)
+            atomic_json(journal,result)
+        if result["image_stem"]!=p.stem: raise ValueError("Journal image mismatch")
+        for row in result["rows"]:
+            if not decode_rle_to_mask(row["segmentation_rle"],shape).any(): raise ValueError("Empty journal mask")
+        return p.stem,result["rows"]
     try:
         with temporary.open("w",newline="",encoding="utf8") as handle:
             writer=csv.DictWriter(handle,fieldnames=COLUMNS); writer.writeheader()
-            for p in paths:
-                source_hash=file_hash(p)
-                journal=journal_dir/(fingerprint(p.stem)+".json")
-                result=json.loads(journal.read_text(encoding="utf8")) if journal.exists() else None
-                if result is None or result.get("source_hash")!=source_hash:
-                    rows=build_submission_rows(p.stem,predict_instances(p),shape)
-                    result=dict(image_stem=p.stem,source_hash=source_hash,rows=rows)
-                    atomic_json(journal,result)
-                if result["image_stem"]!=p.stem: raise ValueError("Journal image mismatch")
-                for row in result["rows"]:
-                    if not decode_rle_to_mask(row["segmentation_rle"],shape).any(): raise ValueError("Empty journal mask")
-                writer.writerows(result["rows"])
-                image_counts[p.stem]=len(result["rows"])
+            for stem,rows in ordered_map(process_source,paths,workers):
+                writer.writerows(rows)
+                image_counts[stem]=len(rows)
         # Validate before making the final artifact visible.
         report=validate_submission(temporary,[p.stem for p in paths],shape,image_counts)
         os.replace(temporary,output)

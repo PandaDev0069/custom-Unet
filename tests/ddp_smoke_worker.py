@@ -14,6 +14,8 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader,DistributedSampler
 from test_model_loss_training import ScalarModel,ScalarDataset,MSELoss
 from filament.training import run_epoch
+from filament.training import PhaseSampler
+from filament.data import TrainValidationDataset,seed_loader_worker
 
 
 def worker(rank,store_path):
@@ -23,7 +25,10 @@ def worker(rank,store_path):
         model=DistributedDataParallel(ScalarModel())
         dataset=ScalarDataset()
         sampler=DistributedSampler(dataset,num_replicas=2,rank=rank,shuffle=False,drop_last=False)
-        loader=DataLoader(dataset,batch_size=2,sampler=sampler)
+        phase_dataset=TrainValidationDataset(dataset,dataset)
+        phase_sampler=PhaseSampler(sampler,list(range(rank,len(dataset),2)))
+        loader=DataLoader(phase_dataset,batch_size=2,sampler=phase_sampler,num_workers=2,
+            persistent_workers=True,prefetch_factor=2,multiprocessing_context="spawn",worker_init_fn=seed_loader_worker)
         optimizer=torch.optim.SGD(model.parameters(),lr=.01)
         result,_=run_epoch(model,loader,MSELoss(),'cpu',optimizer,accumulation_steps=2,amp=False,
             channels_last=False,grad_clip=1e6)
@@ -34,10 +39,11 @@ def worker(rank,store_path):
         loss=((reference(x)-y)**2).mean(); loss.backward(); opt.step()
         assert torch.allclose(model.module.weight,reference.weight,atol=1e-6)
         assert result['samples']==6
-        val=DataLoader(dataset,batch_size=2,sampler=list(range(rank,len(dataset),2)))
-        metrics,_=run_epoch(model,val,MSELoss(),'cpu',amp=False,channels_last=False)
+        phase_dataset.select(True); phase_sampler.validation=True
+        metrics,_=run_epoch(model,loader,MSELoss(),'cpu',amp=False,channels_last=False)
         assert metrics['samples']==5
-        if rank==0: print('PASS: two-rank Gloo accumulation matches reference; validation counts each of five records once',flush=True)
+        if rank==0: print('PASS: two-rank Gloo accumulation matches reference; four persistent workers switch phases; validation counts each of five records once',flush=True)
+        del loader
     finally: dist.destroy_process_group()
 
 

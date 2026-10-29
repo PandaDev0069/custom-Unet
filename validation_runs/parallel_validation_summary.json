@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-29",
+  "tests": {
+    "parallel_cpu_tests.xml": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "3",
+        "tests": "32",
+        "time": "13.268",
+        "timestamp": "2026-10-29T11:28:30.688513+09:00",
+        "hostname": "PANTA_AASHISH"
+      }
+    ],
+    "parallel_gpu_tests.xml": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "1",
+        "tests": "32",
+        "time": "23.792",
+        "timestamp": "2026-10-29T11:28:30.115466+09:00",
+        "hostname": "PANTA_AASHISH"
+      }
+    ]
+  },
+  "notebook": {
+    "total_cells": 101,
+    "executed_code_cells": 52,
+    "errors": 0
+  },
+  "hardware": [
+    {
+      "rank": 0,
+      "name": "NVIDIA GeForce RTX 3070 Ti Laptop GPU",
+      "cpu_workers": 4,
+      "vram_gib": 7.99951171875
+    }
+  ],
+  "dual_t4_verified": false
+}

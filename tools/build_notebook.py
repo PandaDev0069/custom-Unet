@@ -26,9 +26,9 @@ disconnected regions, remain the ground truth for instance evaluation.
 
 Attach the official competition dataset in Kaggle and enable two T4 GPUs (or one
 CUDA GPU). No extra source uploads are required: readable cells below export the
-entire runtime. Default **smoke mode** runs two native images per partition for
-one epoch; set `MODE = 'full'` in section 5 for a real experiment. Smoke checkpoints
-never produce a final test submission. No performance improvement is assumed.
+entire runtime. Defaults use **4 CPU workers and 2 T4 GPUs** for full training.
+Set `MODE = 'smoke'` in section 5 to run two native images per partition for one
+epoch. Smoke checkpoints never produce a final test submission.
 
 Sources: [competition](https://www.kaggle.com/competitions/filament-segmentation-2026),
 [organizer evaluator](https://www.kaggle.com/code/azimahmadzadeh/self-evaluation-notebook),
@@ -80,6 +80,9 @@ The repository `requirements.txt` records a tested auxiliary package set.
     code("""import importlib.util, os, sys, subprocess
 from pathlib import Path
 os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
+# Each CPU worker gets one native-library thread; avoid nested thread pools.
+for variable in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS'):
+    os.environ[variable] = '1'
 missing = [package for module, package in [('pycocotools','pycocotools==2.0.11'),
     ('scipy','scipy==1.18.1'), ('skimage','scikit-image==0.26.0'),
     ('cv2','opencv-python-headless==5.0.0.93'), ('pandas','pandas==3.0.6'),
@@ -115,13 +118,19 @@ for i in range(torch.cuda.device_count()):
 if not torch.cuda.is_available():
     raise RuntimeError('Enable a Kaggle GPU accelerator or use a CUDA-enabled local environment.')
 torch.set_num_threads(1)
+import cv2
+cv2.setNumThreads(1)
 """)
     md("""## 5. Imports and configuration
 
 All major choices live in `Config`. Width 16, GroupNorm, non-reentrant activation
 checkpointing, FP16, microbatch probing, and accumulation are conservative starting
-points for T4s. Width 8 is an automatic pre-training fallback; image resolution
-never changes. Workers are a **total** CPU budget, default zero for one CPU core.
+points for T4s. Microbatches 1, 2 and 4 are probed within each 15 GiB device's
+memory limit. Width 8 is an automatic pre-training fallback; image resolution
+never changes. Four workers are a **total** CPU budget: two loader processes per
+T4 during training/validation; four CPU threads for preparation, search and RLE.
+Both GPUs also run validation/test inference. Native-library threads are capped
+at one per worker. Plotting, reductions and final file assembly remain ordered.
 """)
     code("""from filament.config import Config
 from filament.io import atomic_json, file_hash
@@ -137,13 +146,18 @@ from filament.postprocess import extract_instances
 from filament.submission import *
 from filament.visualization import *
 
-MODE = 'smoke'  # 'smoke' or 'full'
+MODE = 'full'  # 'smoke' or 'full'
+CPU_WORKERS = 4
+REQUESTED_GPUS = 2
 DATA_ROOT_OVERRIDE = ''
 RUN_TRAINING = True
 RUN_TEST_INFERENCE = MODE == 'full'
 ON_KAGGLE = os.name != 'nt' and Path('/kaggle/working').exists() and Path('/kaggle/input').exists()
 OUTPUT_DIR = (Path('/kaggle/working') if ON_KAGGLE else Path.cwd()) / f'filament_{MODE}'
-cfg = Config(data_root=DATA_ROOT_OVERRIDE, output_dir=str(OUTPUT_DIR), smoke=MODE == 'smoke')
+cfg = Config(data_root=DATA_ROOT_OVERRIDE, output_dir=str(OUTPUT_DIR), smoke=MODE == 'smoke',
+             workers=CPU_WORKERS, prefetch_factor=2, deterministic=False)
+# deterministic=False enables cuDNN autotuning for fixed native image shapes.
+# Set it True for deterministic kernels, at a potential throughput cost.
 if MODE == 'smoke':
     cfg.epochs = 1
     cfg.model['init_features'] = 8
@@ -161,8 +175,8 @@ Find `train/train_images`, the original MAGFiLO annotation JSON, and
 pixel-identical duplicates. Test image pixels are used only during final inference.
 """)
     code("""DATA_ROOT = find_dataset_root(cfg.data_root)
-records, integrity = make_records(DATA_ROOT)
-integrity['test_source_images'] = len(discover_test_images(DATA_ROOT))  # Headers/inventory only; no test tuning.
+records, integrity = make_records(DATA_ROOT, workers=cfg.workers)
+integrity['test_source_images'] = len(discover_test_images(DATA_ROOT, workers=cfg.workers))  # Headers/inventory only; no test tuning.
 print({k:v for k,v in integrity.items() if k != 'multi_annotator_sources'})
 print('Multi-annotator source count:', len(integrity['multi_annotator_sources']))
 atomic_json(OUTPUT_DIR / 'data/integrity.json', integrity)
@@ -182,12 +196,12 @@ del instances
 """)
     md("""## 8. Dataset statistics
 
-Statistics stream one record at a time. Smoke mode inspects a small sample; full
+Statistics use a bounded four-worker pool. Smoke mode inspects a small sample; full
 mode validates every original annotation. Area histograms, foreground fraction,
 overlap pixels and small-instance counts are saved without retaining dense masks.
 """)
     code("""stats_records = records[:8] if cfg.smoke else records
-statistics, statistics_rows = summarize_dataset(stats_records)
+statistics, statistics_rows = summarize_dataset(stats_records, workers=cfg.workers)
 atomic_json(OUTPUT_DIR / 'data/statistics.json', statistics)
 pd.DataFrame(statistics_rows).to_csv(OUTPUT_DIR / 'data/statistics_per_record.csv', index=False)
 display(pd.DataFrame(statistics_rows).head())
@@ -230,7 +244,7 @@ Annotation polygons / RLE → one independent mask per annotation
                        └→ originals retained → instance PQ
 ```
 """)
-    code("""runtime = prepare_experiment(cfg, statistics=False)
+    code("""runtime = prepare_experiment(cfg, statistics=False, indexed=(records, integrity))
 train_records, val_records = runtime['train_records'], runtime['val_records']
 figure = plot_dataset_inspection(val_records[0], OUTPUT_DIR / 'figures/targets.png')
 plt.show(); plt.close(figure)
@@ -268,7 +282,8 @@ Lazy loading returns input and three B1HW supervision maps, not an all-dataset
 instance stack. Training DDP uses `DistributedSampler.set_epoch`; validation
 partitions have no padding duplicates. Pinned memory, configurable prefetch and
 persistent workers are enabled only when workers > 0. Shared epoch state keeps
-persistent-worker augmentations correct. Training sampler padding can repeat a
+persistent-worker augmentations correct. One persistent pool serves both phases,
+so four workers are not doubled during validation. Training sampler padding can repeat a
 small number of records to keep rank lengths equal.
 """)
     code("""validation_dataset = FullImageDataset(val_records, normalization=cfg.normalization)
@@ -351,9 +366,13 @@ VRAM is not pooled across GPUs. Unexpected training OOM triggers a whole-job
 restart from the last complete epoch using a smaller microbatch. Width changes
 are permitted only before a checkpoint exists. No automatic spatial reduction.
 """)
-    code("""NUM_GPUS = min(2, torch.cuda.device_count())
+    code("""NUM_GPUS = min(REQUESTED_GPUS, torch.cuda.device_count())
 if os.name == 'nt': NUM_GPUS = 1
 print('Worker GPU count:', NUM_GPUS)
+if NUM_GPUS < REQUESTED_GPUS:
+    print('Using available/supported GPUs; select GPU T4 x2 in Kaggle settings for both T4s.')
+print('Total CPU workers:', cfg.workers, '| workers per GPU:',
+      [cfg.workers // NUM_GPUS + int(rank < cfg.workers % NUM_GPUS) for rank in range(NUM_GPUS)])
 print('Nominal effective batch = selected microbatch ×', NUM_GPUS, '×', cfg.accumulation_steps)
 """)
     md("""## 17. Training configuration
@@ -407,6 +426,7 @@ DEVICE = torch.device('cuda:0')
 model = build_model(effective_cfg.model).to(DEVICE)
 model.load_state_dict(state['model']); model.eval()
 if effective_cfg.channels_last: model.to(memory_format=torch.channels_last)
+predictor = make_predictor(model, effective_cfg, DEVICE, NUM_GPUS)
 print('Selected epoch:', state['epoch'], '| validation PQ:', state['best_metrics'].get('pq'))
 del state
 PROVENANCE = {'checkpoint_sha256':file_hash(CHECKPOINT), 'normalization':effective_cfg.normalization,
@@ -414,7 +434,8 @@ PROVENANCE = {'checkpoint_sha256':file_hash(CHECKPOINT), 'normalization':effecti
 """)
     md("""## 21. Full-resolution validation inference
 
-Run one forward pass per unique validation filename and cache two float16 maps.
+Run one forward pass per unique validation filename across both GPUs and cache
+two float16 maps. Four bounded CPU jobs overlap image reads, GPU work and writes.
 Cache keys include checkpoint, normalization, inference options and source file
 hash. Search reads maps with memory mapping and never repeats model inference.
 Inference during training uses FP32 probabilities; search uses float16 caches,
@@ -422,7 +443,8 @@ which can shift pixels extremely close to a threshold. This precision tradeoff i
 recorded and should be checked in a final experiment if consequential.
 """)
     code("""prediction_manifest = cache_validation_predictions(model, val_records, OUTPUT_DIR / 'validation_predictions',
-    DEVICE, PROVENANCE, amp=effective_cfg.amp, channels_last=effective_cfg.channels_last,
+    DEVICE, PROVENANCE, workers=cfg.workers, predictor=predictor,
+    amp=effective_cfg.amp, channels_last=effective_cfg.channels_last,
     normalization=effective_cfg.normalization)
 print('Cached source predictions:', len(prediction_manifest['entries']))
 """)
@@ -441,7 +463,7 @@ Foreground threshold → optional closing → seed extraction ← separation
 ```
 """)
     code("""baseline_summary, baseline_details = evaluate_cached_predictions(val_records, prediction_manifest,
-    effective_cfg.postprocess)
+    effective_cfg.postprocess, workers=cfg.workers)
 print(baseline_summary)
 """)
     md("""## 23. Official PQ evaluation
@@ -479,8 +501,8 @@ display(pd.DataFrame([{k:r[k] for k in ['file_name','pq','tp','fp','fn','fragmen
     md("""## 25. Validation-based postprocessing optimization
 
 No retraining: reuse cached maps. First configuration wins ties. Save all trials
-to CSV and the winning parameters/provenance to JSON. A small grid is suitable
-for one CPU core; larger grids trade CPU time for exploration. This same holdout
+to CSV and the winning parameters/provenance to JSON. Four CPU workers evaluate
+trials concurrently with bounded memory and deterministic tie order. This holdout
 is used for model and threshold selection, so its score is selection-biased;
 reserve another grouped holdout or use cross-validation for a final estimate.
 """)
@@ -491,7 +513,7 @@ if cfg.smoke:
 # Optional grid entries: seed_distance, seed_min_area, boundary_weight,
 # closing_radius, reconnect_distance (only for method='continuity').
 best_postprocessing, trials = search_postprocessing(val_records, prediction_manifest, SEARCH_GRID,
-    OUTPUT_DIR / 'search', effective_cfg.postprocess)
+    OUTPUT_DIR / 'search', effective_cfg.postprocess, workers=cfg.workers)
 POSTPROCESS = best_postprocessing['postprocess']
 display(trials.sort_values('pq', ascending=False).head())
 """)
@@ -501,7 +523,7 @@ Save full disks and native-pixel zooms for best/worst PQ, false positives, misse
 filaments, fragmentation and merging when those error cases exist. Crops are
 display-only. The probability maps always come from complete-image inference.
 """)
-    code("""selected_summary, selected_details = evaluate_cached_predictions(val_records, prediction_manifest, POSTPROCESS)
+    code("""selected_summary, selected_details = evaluate_cached_predictions(val_records, prediction_manifest, POSTPROCESS, workers=cfg.workers)
 gallery = plot_error_gallery(val_records, prediction_manifest, selected_details, POSTPROCESS, OUTPUT_DIR / 'figures/errors')
 review = val_records[0]
 probabilities = np.load(prediction_manifest['entries'][review['file_name']]['path'], mmap_mode='r')
@@ -512,16 +534,17 @@ print('Saved review figures:', gallery)
     md("""## 27. Test inference
 
 Use the selected checkpoint and validation-selected parameters. Each original
-test image receives one full-resolution forward pass. Per-image atomic journals
+test image receives one full-resolution forward pass, distributed across both
+T4s. Four CPU jobs overlap reading, GPU forwards, postprocessing and RLE encoding.
+Per-image atomic journals
 support resuming an interruption and record zero detections explicitly. Journals
 are bound to checkpoint, postprocessing, normalization and source file content.
 """)
     code("""if RUN_TEST_INFERENCE and effective_cfg.smoke:
     raise ValueError('Smoke checkpoints cannot create a final competition submission.')
-test_paths = discover_test_images(DATA_ROOT) if RUN_TEST_INFERENCE else []
+test_paths = discover_test_images(DATA_ROOT, workers=cfg.workers) if RUN_TEST_INFERENCE else []
 def predict_test_instances(path):
-    probabilities = predict_full_image(model, read_grayscale(path), DEVICE,
-        effective_cfg.amp, effective_cfg.channels_last, effective_cfg.normalization)
+    probabilities = predictor(path)
     return extract_instances(probabilities.astype(np.float16), POSTPROCESS)[1]
 print('Test sources to process:', len(test_paths))
 """)
@@ -540,7 +563,7 @@ native independent masks → Fortran-order uint8 → pycocotools encode → coun
 """)
     code("""if RUN_TEST_INFERENCE:
     submission_report = generate_submission(test_paths, predict_test_instances, OUTPUT_DIR / 'submission.csv',
-        OUTPUT_DIR / 'inference_journal', PROVENANCE | {'postprocess':POSTPROCESS})
+        OUTPUT_DIR / 'inference_journal', PROVENANCE | {'postprocess':POSTPROCESS}, workers=cfg.workers)
     print(submission_report)
 else:
     print('Final submission is disabled in smoke mode.')
@@ -593,11 +616,12 @@ print(summary)
     nb.metadata=dict(kernelspec=dict(display_name="Python 3",language="python",name="python3"),
         language_info=dict(name="python",version="3.12"),
         kaggle=dict(accelerator="gpu",isInternetEnabled=True),
-        filament=dict(source_files={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in files}))
+        filament=dict(source_files={p.relative_to(ROOT).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in files}))
     for i,cell in enumerate(nb.cells): cell.id=f"filament-{i:03d}"
     nbf.validate(nb)
     output=ROOT/'solar_filament_unet_pq.ipynb'
-    nbf.write(nb,output)
+    with output.open('w',encoding='utf8',newline='\n') as handle:
+        nbf.write(nb,handle)
     print(f"Wrote {output}: {len(cells)} cells, {output.stat().st_size:,} bytes")
 
 

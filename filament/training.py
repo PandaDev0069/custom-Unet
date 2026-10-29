@@ -17,10 +17,10 @@ import pandas as pd
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler, Sampler
 
 from .config import Config
-from .data import FullImageDataset, cached_instances, seed_loader_worker
+from .data import FullImageDataset, TrainValidationDataset, cached_instances, seed_loader_worker
 from .evaluation import evaluate_panoptic_quality, summarize_validation_results
 from .io import atomic_json
 from .losses import FilamentPQProxyLoss
@@ -28,6 +28,19 @@ from .model import build_model
 from .postprocess import extract_instances
 
 LOSS_NAMES=("loss","bce","dice","boundary","cldice")
+
+
+class PhaseSampler(Sampler):
+    """Switch only after exhausting an epoch iterator; keep one loader worker pool."""
+    def __init__(self, train_sampler, validation_indices):
+        self.train_sampler, self.validation_indices = train_sampler, validation_indices
+        self.validation = False
+
+    def __iter__(self):
+        return iter(self.validation_indices if self.validation else self.train_sampler)
+
+    def __len__(self):
+        return len(self.validation_indices if self.validation else self.train_sampler)
 
 
 def seed_everything(seed: int, deterministic=True):
@@ -293,14 +306,15 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
         if microbatch is None: raise RuntimeError("No native-resolution training batch fits; reduce channel width or free GPU memory")
         config.microbatch=microbatch
         model=DDP(model,device_ids=[local_rank],broadcast_buffers=False,gradient_as_bucket_view=True) if distributed else model
-        sampler=DistributedSampler(train_set,num_replicas=world,rank=rank,seed=config.seed,drop_last=False) if distributed else None
+        sampler=DistributedSampler(train_set,num_replicas=world,rank=rank,seed=config.seed,drop_last=False)
         workers=config.workers//world+int(rank<config.workers%world)
         options=dict(batch_size=microbatch,pin_memory=True,worker_init_fn=seed_loader_worker)
         worker_options=dict(num_workers=workers)
         if workers: worker_options.update(prefetch_factor=config.prefetch_factor,persistent_workers=True,multiprocessing_context="spawn")
         generator=torch.Generator()
-        train_loader=DataLoader(train_set,sampler=sampler,shuffle=sampler is None,generator=generator,**options,**worker_options)
-        val_loader=DataLoader(val_set,sampler=list(range(rank,len(val_set),world)),num_workers=0,**options)
+        phase_dataset=TrainValidationDataset(train_set,val_set)
+        phase_sampler=PhaseSampler(sampler,list(range(rank,len(val_set),world)))
+        loader=DataLoader(phase_dataset,sampler=phase_sampler,generator=generator,**options,**worker_options)
         optimizer=torch.optim.AdamW(model.parameters(),lr=config.learning_rate,weight_decay=config.weight_decay)
         scaler=torch.amp.GradScaler("cuda",enabled=config.amp)
         scheduler=(torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,mode="min",factor=.5,patience=2) if config.scheduler=="plateau"
@@ -311,7 +325,7 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
             start=previous["epoch"]; history=previous["history"]; early=previous["early_stopping"]; best=previous["best_metrics"]
             elapsed_before=history[-1].get("total_training_seconds",0) if history else 0
             del previous
-        hardware=gather_objects(dict(rank=rank,name=torch.cuda.get_device_name(device),
+        hardware=gather_objects(dict(rank=rank,name=torch.cuda.get_device_name(device),cpu_workers=workers,
             vram_gib=torch.cuda.get_device_properties(device).total_memory/2**30))
         if rank==0:
             atomic_json(output/"effective_config.json",config.to_dict())
@@ -324,12 +338,14 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
         started=time.perf_counter()
         for epoch in range(start+1,config.epochs+1):
             train_set.set_epoch(epoch); generator.manual_seed(config.seed+epoch+rank)
-            if sampler: sampler.set_epoch(epoch)
+            sampler.set_epoch(epoch)
+            phase_dataset.select(False); phase_sampler.validation=False
             torch.cuda.reset_peak_memory_stats(device)
-            train_metrics=train_one_epoch(model,train_loader,criterion,optimizer,scaler,device,
+            train_metrics=train_one_epoch(model,loader,criterion,optimizer,scaler,device,
                 accumulation_steps=config.accumulation_steps,amp=config.amp,channels_last=config.channels_last,grad_clip=config.grad_clip,log_every=config.log_every)
             do_pq=epoch%config.pq_every==0 or epoch==config.epochs
-            val_metrics,details=validate_one_epoch(model,val_loader,criterion,device,
+            phase_dataset.select(True); phase_sampler.validation=True
+            val_metrics,details=validate_one_epoch(model,loader,criterion,device,
                 amp=config.amp,channels_last=config.channels_last,pq_records=val_records if do_pq else None,
                 postprocess_config=config.postprocess,log_every=config.log_every)
             if scheduler:
