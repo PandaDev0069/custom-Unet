@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pandas as pd
@@ -75,9 +76,16 @@ def launch_training(runtime: dict, num_gpus=None) -> None:
         run_file=output/"worker_runtime.json"
         runtime["config"]=config.to_dict(); atomic_json(run_file,runtime)
         command=[sys.executable,"-u"]
-        if count>1: command += ["-m","torch.distributed.run","--standalone",f"--nproc_per_node={count}"]
+        if count>1:
+            # This launcher is single-host. Pin both rendezvous and the address
+            # advertised to workers to loopback instead of resolving the host FQDN.
+            command += ["-m","torch.distributed.run","--nnodes=1","--rdzv_backend=c10d",
+                "--rdzv_endpoint=127.0.0.1:0","--local_addr=127.0.0.1",f"--rdzv_id={uuid.uuid4().hex}",
+                f"--nproc_per_node={count}"]
         command += ["-m","filament.cli","worker","--runtime",str(run_file)]
         log=output/"logs"/f"training_attempt_{attempt}.log"; log.parent.mkdir(parents=True,exist_ok=True)
+        print(f"Launching {count} GPU rank(s), {config.workers} total CPU workers; log: {log}",flush=True)
+        launched=time.perf_counter()
         with log.open("w",encoding="utf8") as handle:
             process=subprocess.Popen(command,cwd=source_root,env=environment,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                 text=True,bufsize=1,start_new_session=os.name!="nt",
@@ -93,7 +101,9 @@ def launch_training(runtime: dict, num_gpus=None) -> None:
                 else:
                     subprocess.run(["taskkill","/PID",str(process.pid),"/T","/F"],capture_output=True)
                 process.wait(); raise
-        if returncode==0: return
+        if returncode==0:
+            print(f"Training workers completed in {time.perf_counter()-launched:.1f}s",flush=True)
+            return
         signals=list(output.glob("oom_rank_*.json"))
         if not signals: raise RuntimeError(f"Training worker failed ({returncode}); inspect {log}")
         failures=[json.loads(p.read_text(encoding="utf8")) for p in signals]

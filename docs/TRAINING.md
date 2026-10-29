@@ -93,7 +93,10 @@ forwarded concurrently by two threads. Ordered, bounded results keep memory use
 proportional to workers, preserve CSV order and retain resumable atomic journals.
 
 Notebook defaults enable cuDNN autotuning (`deterministic=False`) and probe
-microbatches 1, 2 and 4 under the existing 85% per-device memory limit. FP16,
+microbatches 1 and 2 under the existing 85% per-device memory limit. The supplied
+dual-T4 log measures batch two fitting and batch four running out of memory, so
+four is no longer a default probe. Larger candidates remain opt-in through
+`cfg.batch_candidates`. FP16,
 channels-last and activation checkpointing remain enabled. Set
 `cfg.deterministic=True` before preparation to resume an older deterministic run;
 resume deliberately rejects changes to that setting. Full GPU utilization and
@@ -108,6 +111,24 @@ cannot guarantee bit-identical CUDA results. The launcher sets
 `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Resume preserves mathematical state at a complete
 epoch; changed world size is rejected. Changing the microbatch during OOM recovery
 can change optimization/rounding trajectories despite correct accumulation.
+
+## Grayscale layout and startup diagnostics
+
+Grayscale N1HW tensors are considered both contiguous and channels-last. Calling
+`contiguous(memory_format=channels_last)` leaves their channel stride unchanged.
+The CUDA reproduction with FP16 and activation checkpointing then produced the
+reported first-layer gradient stride `(9,9,3,1)` instead of the DDP parameter's
+`(9,1,3,1)`. `_device_batch` now specifies the memory format in `to(device, ...)`,
+including the asynchronous transfer. This explicitly sets channel stride one;
+CUDA regression tests check exact parameter/gradient strides across accumulation
+and short final batches. See the [PyTorch singleton-dimension explanation](https://docs.pytorch.org/tutorials/intermediate/memory_format_tutorial.html#memory-format-api).
+
+Torchrun now pins rendezvous and its advertised local address to `127.0.0.1` for
+this single-host job. Rank-labelled timings cover Python imports, CUDA setup,
+NCCL initialization, sample/model setup, probing, DDP wrapping and loaders.
+The supplied log's approximately 17-minute pre-probe gap cannot be assigned to a
+specific stage from that excerpt; these messages identify it on the next run.
+The probe's caught batch-four OOM was a capacity check, not a failed epoch.
 
 ## Checkpoints, selection and logs
 

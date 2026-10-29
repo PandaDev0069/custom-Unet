@@ -27,7 +27,7 @@ class Config:
     scheduler: str = "plateau"
     accumulation_steps: int = 4
     microbatch: int | str = "auto"
-    batch_candidates: list = field(default_factory=lambda: [1, 2, 4])
+    batch_candidates: list = field(default_factory=lambda: [1, 2])  # Dual-T4 log: 2 fits, 4 OOMs.
     width_fallbacks: list = field(default_factory=lambda: [8])
     memory_fraction: float = .85
     grad_clip: float = 1.

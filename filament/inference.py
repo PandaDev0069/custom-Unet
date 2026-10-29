@@ -66,8 +66,8 @@ def predict_full_image(model, image: np.ndarray, device, amp=True, channels_last
     if image.dtype!=np.uint8 or image.shape!=(expected_size,expected_size):
         raise ValueError("Prediction requires a complete native uint8 grayscale image")
     device=torch.device(device)
-    inputs=torch.from_numpy(normalize_image(image,normalization)[None,None]).to(device)
-    if channels_last: inputs=inputs.contiguous(memory_format=torch.channels_last)
+    inputs=torch.from_numpy(normalize_image(image,normalization)[None,None]).to(device,
+        **(dict(memory_format=torch.channels_last) if channels_last else {}))
     model.eval()
     with torch.inference_mode(),torch.autocast(device.type,dtype=torch.float16,enabled=amp and device.type=="cuda"):
         logits=model(inputs)

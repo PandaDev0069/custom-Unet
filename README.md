@@ -12,7 +12,7 @@ The four loader workers are split two per GPU and reused for training/validation
 Preparation, statistics, postprocessing search, and submission encoding use bounded
 four-thread pools. Validation and test inference keep one model on each GPU and
 process full images concurrently. FP16, pinned/prefetched loading, channels-last,
-and cuDNN autotuning are enabled; real-backward probes select microbatch 1, 2, or 4
+and cuDNN autotuning are enabled; real-backward probes select microbatch 1 or 2
 within each GPU's memory limit. The two 15 GiB memories remain separate.
 
 The primary model is the saved four-pool `ModifiedUNet`, extended to foreground

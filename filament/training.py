@@ -84,9 +84,13 @@ def gpu_statistics(device) -> dict:
 
 
 def _device_batch(batch,device,channels_last):
-    result={k:v.to(device,non_blocking=True) for k,v in batch.items() if k!="index"}
-    if channels_last: result["image"]=result["image"].contiguous(memory_format=torch.channels_last)
-    return result
+    # For grayscale N1HW, contiguous(channels_last) is a no-op: it leaves
+    # channel stride H*W. cuDNN then returns an NCHW first-convolution gradient,
+    # while DDP expects the NHWC parameter stride. `to` explicitly restrides
+    # singleton dimensions, and combining it with H2D avoids a second GPU copy.
+    return {k:v.to(device,non_blocking=True,**(
+        dict(memory_format=torch.channels_last) if k=="image" and channels_last else {}))
+        for k,v in batch.items() if k!="index"}
 
 
 def run_epoch(model, loader, criterion, device, optimizer=None, scaler=None,
@@ -219,8 +223,11 @@ def probe_batch_sizes(model,criterion,sample,config,device) -> tuple[int|None,li
     requested=config["microbatch"]
     candidates=sorted(set(config["batch_candidates"] if requested=="auto" else [1,int(requested)]))
     reports=[]
+    rank=dist.get_rank() if _distributed() else 0
     try:
         for batch_size in candidates:
+            before_probe=time.perf_counter()
+            print(f"[rank {rank}] Probing native microbatch={batch_size}...",flush=True)
             optimizer=values=inputs=logits=scaler=None
             model.load_state_dict(original); restore_rng(random_state); model.train()
             gc.collect(); torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats(device)
@@ -255,7 +262,7 @@ def probe_batch_sizes(model,criterion,sample,config,device) -> tuple[int|None,li
                 model.zero_grad(set_to_none=True); optimizer=values=inputs=logits=scaler=None
                 gc.collect(); torch.cuda.empty_cache()
             reports.append(report)
-            print(f"GPU probe: {report}",flush=True)
+            print(f"[rank {rank}] GPU probe ({time.perf_counter()-before_probe:.1f}s total): {report}",flush=True)
     finally:
         model.load_state_dict(original); restore_rng(random_state); model.zero_grad(set_to_none=True)
     rank_reports=gather_objects(reports)
@@ -269,13 +276,21 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
     config.validate()
     rank=int(os.environ.get("RANK",0)); local_rank=int(os.environ.get("LOCAL_RANK",0))
     world=int(os.environ.get("WORLD_SIZE",1)); distributed=world>1
+    startup=time.perf_counter()
+    def progress(message):
+        print(f"[rank {rank} +{time.perf_counter()-startup:.1f}s] {message}",flush=True)
+    progress(f"Initializing CUDA device {local_rank}; world_size={world}")
     if not torch.cuda.is_available(): raise RuntimeError("Production training requires CUDA; synthetic unit tests run on CPU")
     if distributed and (os.name=="nt" or not dist.is_nccl_available()): raise RuntimeError("Multi-GPU training requires Linux CUDA/NCCL")
     device=torch.device("cuda",local_rank); torch.cuda.set_device(device)
     torch.set_num_threads(1); cv2.setNumThreads(1)
     seed_everything(config.seed,config.deterministic)
     output=Path(config.output_dir); output.mkdir(parents=True,exist_ok=True)
-    if distributed: dist.init_process_group("nccl",timeout=timedelta(minutes=30),device_id=device)
+    progress("CUDA ready")
+    if distributed:
+        progress("Initializing NCCL process group")
+        dist.init_process_group("nccl",timeout=timedelta(minutes=30),device_id=device)
+        progress("NCCL ready")
     try:
         previous=load_checkpoint(config.resume) if config.resume else None
         if previous:
@@ -296,6 +311,7 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
             widths+=sorted({w for w in config.width_fallbacks if w<widths[0]},reverse=True)
         model=None; all_probes=[]
         for width in widths:
+            progress(f"Building model width={width}; loading probe sample")
             if model is not None: del model; gc.collect(); torch.cuda.empty_cache()
             if config.model.get("name","modified")=="modified": config.model["init_features"]=width
             model=build_model(config.model).to(device)
@@ -305,6 +321,8 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
             if microbatch is not None: break
         if microbatch is None: raise RuntimeError("No native-resolution training batch fits; reduce channel width or free GPU memory")
         config.microbatch=microbatch
+        progress(f"Selected microbatch={microbatch} per GPU; effective batch={microbatch*world*config.accumulation_steps}")
+        progress("Wrapping model with DDP" if distributed else "Setting up single-GPU training")
         model=DDP(model,device_ids=[local_rank],broadcast_buffers=False,gradient_as_bucket_view=True) if distributed else model
         sampler=DistributedSampler(train_set,num_replicas=world,rank=rank,seed=config.seed,drop_last=False)
         workers=config.workers//world+int(rank<config.workers%world)
@@ -315,6 +333,7 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
         phase_dataset=TrainValidationDataset(train_set,val_set)
         phase_sampler=PhaseSampler(sampler,list(range(rank,len(val_set),world)))
         loader=DataLoader(phase_dataset,sampler=phase_sampler,generator=generator,**options,**worker_options)
+        progress(f"Loader ready: {workers} CPU workers on this rank; prefetch={config.prefetch_factor}")
         optimizer=torch.optim.AdamW(model.parameters(),lr=config.learning_rate,weight_decay=config.weight_decay)
         scaler=torch.amp.GradScaler("cuda",enabled=config.amp)
         scheduler=(torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,mode="min",factor=.5,patience=2) if config.scheduler=="plateau"
@@ -337,6 +356,7 @@ def train(config: Config, train_records: list, val_records: list, split_fingerpr
                 torch_version=torch.__version__,cuda_version=torch.version.cuda,package_versions=versions))
         started=time.perf_counter()
         for epoch in range(start+1,config.epochs+1):
+            progress(f"Starting epoch {epoch}/{config.epochs}")
             train_set.set_epoch(epoch); generator.manual_seed(config.seed+epoch+rank)
             sampler.set_epoch(epoch)
             phase_dataset.select(False); phase_sampler.validation=False

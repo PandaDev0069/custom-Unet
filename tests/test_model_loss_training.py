@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader,Dataset
 from unet import ModifiedUNet
 from filament.losses import FilamentPQProxyLoss,instance_boundaries
-from filament.training import (run_epoch,save_checkpoint,load_checkpoint,resume_training,update_early_stopping,rng_state,probe_batch_sizes)
+from filament.training import (run_epoch,save_checkpoint,load_checkpoint,resume_training,update_early_stopping,rng_state,probe_batch_sizes,_device_batch)
 from filament.config import Config
 from filament.model import build_model
 
@@ -101,6 +101,37 @@ def test_gpu_amp_training_path():
     loss=FilamentPQProxyLoss().cuda()(output,targets)["loss"]
     scaler.scale(loss).backward(); scaler.step(optimizer); scaler.update()
     assert optimizer.state and torch.isfinite(loss)
+
+
+@pytest.mark.parametrize("batch_size",[1,2])
+def test_grayscale_batch_explicit_channels_last_stride(batch_size):
+    image=torch.randn(batch_size,1,32,32)
+    batch=dict(image=image,foreground=torch.zeros_like(image),index=torch.arange(batch_size))
+    converted=_device_batch(batch,"cpu",True)
+    assert converted["image"].stride()==(1024,1,32,1)
+    assert torch.equal(converted["image"],image) and "index" not in converted
+    assert converted["foreground"].stride()==image.stride()
+
+
+@pytest.mark.gpu
+def test_cuda_grayscale_amp_gradient_layout_with_accumulation():
+    if not torch.cuda.is_available(): pytest.skip("CUDA unavailable")
+    model=ModifiedUNet(init_features=2,checkpoint_blocks=True).cuda().to(memory_format=torch.channels_last)
+    criterion=FilamentPQProxyLoss().cuda()
+    optimizer=torch.optim.AdamW(model.parameters())
+    scaler=torch.amp.GradScaler("cuda",init_scale=128.)
+    # Full batch and short final batch: retain no_sync-style accumulated grads.
+    # This reproduced [9,9,3,1] vs [9,1,3,1] on CUDA before the input fix.
+    for batch_size in (2,2,1):
+        image=torch.randn(batch_size,1,32,32)
+        batch=dict(image=image,foreground=torch.zeros_like(image),separation=torch.zeros_like(image),
+                   separation_valid=torch.ones_like(image))
+        inputs=_device_batch(batch,"cuda",True)
+        with torch.autocast("cuda",dtype=torch.float16): logits=model(inputs["image"])
+        scaler.scale(criterion(logits,inputs)["loss"]/3).backward()
+        assert all(p.grad is not None and p.grad.stride()==p.stride() for p in model.parameters())
+    scaler.step(optimizer); scaler.update()
+    assert optimizer.state
 
 
 @pytest.mark.native

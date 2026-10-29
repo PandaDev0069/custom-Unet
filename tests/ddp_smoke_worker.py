@@ -5,6 +5,7 @@ pretending to validate Linux/NCCL or dual-T4 memory/throughput.
 """
 import sys
 import tempfile
+import warnings
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import torch
@@ -16,6 +17,9 @@ from test_model_loss_training import ScalarModel,ScalarDataset,MSELoss
 from filament.training import run_epoch
 from filament.training import PhaseSampler
 from filament.data import TrainValidationDataset,seed_loader_worker
+from filament.model import build_model
+from filament.losses import FilamentPQProxyLoss
+from filament.training import _device_batch
 
 
 def worker(rank,store_path):
@@ -42,6 +46,21 @@ def worker(rank,store_path):
         phase_dataset.select(True); phase_sampler.validation=True
         metrics,_=run_epoch(model,loader,MSELoss(),'cpu',amp=False,channels_last=False)
         assert metrics['samples']==5
+        # Exercise the same DDP bucket setting, grayscale input and checkpointing
+        # as production. CUDA-specific gradient strides have a separate GPU test.
+        convolution=build_model(dict(init_features=2,checkpoint_blocks=True)).to(memory_format=torch.channels_last)
+        convolution=DistributedDataParallel(convolution,gradient_as_bucket_view=True,broadcast_buffers=False)
+        loss_fn=FilamentPQProxyLoss()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            for batch_size in (2,1):
+                image=torch.randn(batch_size,1,32,32)
+                batch=_device_batch(dict(image=image,foreground=torch.zeros_like(image),
+                    separation=torch.zeros_like(image),separation_valid=torch.ones_like(image)),'cpu',True)
+                loss_fn(convolution(batch['image']),batch)['loss'].backward()
+            assert not [w for w in caught if 'Grad strides do not match bucket view strides' in str(w.message)]
+        assert all(p.grad.stride()==p.stride() for p in convolution.parameters())
+        if rank==0: print('PASS: channels-last grayscale/checkpointed DDP backward has matching gradient/bucket strides',flush=True)
         if rank==0: print('PASS: two-rank Gloo accumulation matches reference; four persistent workers switch phases; validation counts each of five records once',flush=True)
         del loader
     finally: dist.destroy_process_group()

@@ -125,8 +125,9 @@ cv2.setNumThreads(1)
 
 All major choices live in `Config`. Width 16, GroupNorm, non-reentrant activation
 checkpointing, FP16, microbatch probing, and accumulation are conservative starting
-points for T4s. Microbatches 1, 2 and 4 are probed within each 15 GiB device's
-memory limit. Width 8 is an automatic pre-training fallback; image resolution
+points for T4s. Microbatches 1 and 2 are probed within each 15 GiB device's
+memory limit; the supplied dual-T4 log confirms 2 fits and 4 OOMs. Width 8 is an
+automatic pre-training fallback; image resolution
 never changes. Four workers are a **total** CPU budget: two loader processes per
 T4 during training/validation; four CPU threads for preparation, search and RLE.
 Both GPUs also run validation/test inference. Native-library threads are capped
@@ -391,7 +392,9 @@ print('Epochs:', cfg.epochs, '| PQ frequency:', cfg.pq_every, '| clDice:', cfg.l
 An independent generated worker process avoids notebook DDP spawning issues.
 Logs stream to this cell and disk. Interrupting training leaves the last complete
 epoch intact; set `cfg.resume` in section 5 and rerun preparation/training.
-Smoke mode verifies execution, not model quality.
+Rank-labelled startup timings identify import, CUDA, NCCL, probe and loader waits.
+Single-host torchrun uses an explicit loopback rendezvous. Smoke mode verifies
+execution, not model quality.
 """)
     code("""if RUN_TRAINING:
     # Avoid retaining parent-process CUDA models while workers train.

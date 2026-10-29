@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-29",
+  "tests": {
+    "logfix_cpu_tests.xml": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "4",
+        "tests": "35",
+        "time": "13.228",
+        "timestamp": "2026-10-29T12:23:01.392762+09:00",
+        "hostname": "PANTA_AASHISH"
+      }
+    ],
+    "logfix_gpu_tests.xml": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "1",
+        "tests": "35",
+        "time": "14.014",
+        "timestamp": "2026-10-29T12:22:59.351480+09:00",
+        "hostname": "PANTA_AASHISH"
+      }
+    ]
+  },
+  "notebook": {
+    "code_cells": 52,
+    "errors": 0
+  },
+  "stride_warning_reproduced_and_fixed": true,
+  "dual_t4_nccl_verified": false,
+  "two_rank_gloo_layout_check": "passed",
+  "two_rank_loopback_check": "passed with Windows legacy TCPStore test harness"
+}

@@ -1,9 +1,9 @@
 """python -m filament.cli prepare|train|worker|infer|smoke."""
 import argparse
 import json
+import os
+import time
 from pathlib import Path
-import torch
-import numpy as np
 from .config import Config
 from .io import atomic_json,file_hash
 
@@ -15,7 +15,13 @@ def main():
     parser.add_argument("--gpus",type=int); parser.add_argument("--output",default="filament_outputs")
     args=parser.parse_args()
     if args.command=="worker":
+        started=time.perf_counter()
+        print(f"[rank {os.environ.get('RANK',0)}] Worker started; importing PyTorch and training runtime...",flush=True)
+    import torch
+    import numpy as np
+    if args.command=="worker":
         from .training import train
+        print(f"[rank {os.environ.get('RANK',0)}] Runtime imports ready ({time.perf_counter()-started:.1f}s)",flush=True)
         runtime=json.loads(Path(args.runtime).read_text(encoding="utf8"))
         train(Config(**runtime["config"]),runtime["train_records"],runtime["val_records"],runtime["split_fingerprint"])
         return

@@ -1,5 +1,30 @@
 # Executed validation
 
+## T4 log fixes (2026-10-29)
+
+- Reproduced the reported `(9,9,3,1)` versus `(9,1,3,1)` grayscale CUDA gradient
+  mismatch and verified explicit channels-last transfer removes it. Regression
+  coverage includes FP16, checkpointing, accumulation and a short final batch.
+- CUDA suite with native probing: **34 passed, 1 skipped**
+  ([XML](../validation_runs/logfix_gpu_tests.xml)); the skipped test requires two GPUs.
+- CPU suite: **31 passed, 4 CUDA-only skipped**
+  ([XML](../validation_runs/logfix_cpu_tests.xml)). Two-rank Gloo checks passed,
+  including checkpointed channels-last convolution with gradient bucket views
+  and no gradient-stride warning.
+- Two-rank torchrun loopback rendezvous/all-reduce passed using a Windows-only
+  legacy TCPStore test harness (the local wheel has no libuv). Production Linux
+  NCCL transport was not exercised by that CPU check.
+- Notebook source parity and all 52 code cells passed in a complete standalone
+  native-resolution smoke run ([executed notebook](../validation_runs/executed_logfix_smoke.ipynb)).
+  Hardware: one RTX 3070 Ti Laptop GPU, four loader workers for this test.
+- The supplied dual-T4 log establishes batch two fits and batch four OOMs. Default
+  probing now tests one and two. The pre-probe startup gap is not explained by
+  the supplied excerpt; stage timings and explicit loopback rendezvous aid diagnosis.
+
+User notebook code/settings outside runtime exports were preserved, with original
+outputs saved in `validation_runs/pre_logfix_notebook.ipynb`. The updated notebook
+clears old execution outputs. Dual-T4/NCCL execution remains unverified locally.
+
 ## Four-worker runtime update (2026-10-29)
 
 - CPU suite: **29 passed, 3 CUDA-only skipped**
